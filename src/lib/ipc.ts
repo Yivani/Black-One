@@ -258,6 +258,7 @@ export const ipc = {
   factoryReset: () => invokeTauri<void>("factory_reset"),
   checkForUpdates: () => invokeTauri<UpdateCheckResult>("check_for_updates"),
   openDataFolder: () => invokeTauri<void>("open_data_folder"),
+  relaunchApp: () => invokeTauri<void>("relaunch_app"),
   setAutoStart: (enabled: boolean) => invokeTauri<void>("set_auto_start", { enabled }),
   isAutoStartEnabled: () => invokeTauri<boolean>("is_auto_start_enabled"),
 

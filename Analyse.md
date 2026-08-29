@@ -1,12 +1,13 @@
 # Black One — application analysis
 
 Last reviewed: 2026-08-29
+Version: 1.0.0
 
 ## Executive summary
 
 Black One is a local-first desktop AI chat client built with React 19, TypeScript, Vite, Tailwind CSS, Zustand, Tauri 2, Rust, SQLite, and a native PTY terminal. The frontend production build and Rust compile check both pass.
 
-The app is a compact, functional beta. Core chat, sessions, folders, streaming, provider management, local persistence, terminals, and a new file/shell tool system are real. Several visible settings and capabilities are partially wired or honest about their limits, but the highest-impact trust gaps around tools and agent execution have been closed in this iteration.
+Version 1.0.0 graduates the app from beta to a stable release. The UI surface is now complete: resizable panels, a robust system tray, expanded themes, capped chat titles, centered navigation, and a working in-app updater. The agent tool loop can read, write, delete, rename, list, and execute shell commands inside attached folders with explicit permission modes. The highest-impact trust gaps around tools, agent execution, and update delivery have been closed in this iteration.
 
 ## Current product surface
 
@@ -15,9 +16,15 @@ The app is a compact, functional beta. Core chat, sessions, folders, streaming, 
 - File, folder, image, clipboard-image, and URL attachment UI with a configurable size cap for image previews.
 - Chat, Code, and Agent views, with a native multi-terminal implementation.
 - **Agent-style file and shell tools** that work with any provider via XML markers: read, write, create, delete, rename, list, and one-shot shell execution inside attached folders.
-- **Permission modes** for tool execution: Manual (approve everything), Auto (low-risk edits run freely; high-risk still asks), and YOLO (run without approval).
-- Expanded theme presets including Nord, Dracula, Solarized, Sakura, and Amber in addition to the original set.
-- System tray with Show/Hide/Quit menu and single-instance enforcement so only one tray icon appears.
+- **Permission modes** for tool execution: Manual (approve everything), Auto (low-risk edits run freely; high-risk still asks), and YOLO (run without approval). Exposed as a composer dropdown with descriptions for each mode.
+- **Expanded theme presets** including Nord, Dracula, Solarized, Sakura, Amber, Forest, Ocean, Rose, Midnight, and others in addition to the original set.
+- **Resizable left and right panels** with min/max bounds and persisted widths.
+- **Chat title management**: sidebar titles are capped and truncated; the AI can auto-rename new chats to a short, useful title based on the first exchange.
+- **App title stability**: the window/app title remains "Black One" regardless of the selected chat name.
+- **System tray**: single-instance enforcement prevents duplicate tray icons; left click toggles visibility, double-click restores, right-click opens the context menu with Show/Hide/Quit.
+- **Centered top navigation**: Chat, Code, and Analytics tabs are centered in the title bar.
+- **Quick Chat**: standalone popup chat with proper scrolling and Escape-to-hide behavior.
+- **In-app updater**: checks GitHub Releases for `v1.0.0+` updates, downloads, installs, and prompts for restart.
 - Settings for models, providers, appearance, chat behavior (personalities, timezone, reasoning blocks, image attachments, preview limits), safety, memory, notifications, tools, archive, and advanced options.
 - Desktop packaging for Windows, macOS, and Linux through Tauri.
 
@@ -28,16 +35,18 @@ React UI
   ├─ Zustand stores: chat, sessions, models, settings, terminal, UI, tool runtime
   ├─ Provider API adapters: SSE streaming and model discovery
   ├─ Tool runtime: parser, risk classifier, executor, permission store
+  ├─ Tauri updater plugin: check, download, install, restart
   └─ PersistenceAdapter
        ├─ Browser: Dexie / IndexedDB
        └─ Desktop: Tauri IPC
             ├─ SQLite: sessions, messages, folders, settings
             ├─ OS keyring: provider API keys
             ├─ Native filesystem commands (read/write/delete/rename/list/shell)
-            └─ portable-pty terminal manager
+            ├─ portable-pty terminal manager
+            └─ Updater signatures via Ed25519 public key
 ```
 
-The `PersistenceAdapter` boundary remains a good decision: browser preview and desktop builds share the same stores while using appropriate storage backends. The Rust side is small and direct rather than over-abstracted. The new tool runtime is provider-agnostic because it uses inline XML markers instead of native function calling, so it works with demo, local, and cloud models.
+The `PersistenceAdapter` boundary remains a good decision: browser preview and desktop builds share the same stores while using appropriate storage backends. The Rust side is small and direct rather than over-abstracted. The tool runtime is provider-agnostic because it uses inline XML markers instead of native function calling, so it works with demo, local, and cloud models. The updater relies on GitHub Releases plus a bundled Ed25519 public key for signature verification.
 
 Approximate source size at review time:
 
@@ -59,6 +68,8 @@ Approximate source size at review time:
 9. **The visual system is restrained.** Tokens, consistent spacing, dark mode, Inter/JetBrains Mono, and limited elevation fit a productivity app. The redesigned Analytics view avoids the previous gradient-cards, bright filter chips, and oversized empty states.
 10. **File and shell tools are wired end-to-end.** Attaching a folder lets the model create, edit, delete, rename, list, and run shell commands inside that folder. Tool calls are parsed from the assistant response, executed through Tauri commands, and results are fed back into the chat loop. Risk classification and permission modes give the user control without requiring provider tool support.
 11. **Tray integration is robust.** Single-instance enforcement prevents duplicate tray icons, and left/right/double clicks are handled explicitly for toggle and menu behavior.
+12. **UI polish gaps are closed.** Resizable panels, centered top tabs, stable app title, capped chat titles, and expanded theme presets make the app feel finished.
+13. **Update delivery is automated.** The Tauri updater plugin checks GitHub Releases, verifies signatures, downloads, installs, and prompts for restart.
 
 ## Priority findings
 
@@ -104,6 +115,12 @@ The tool permission setting and configured tools now have partial runtime enforc
 `sendMessage` changes UI state to streaming before persisting the user and assistant messages. Those persistence calls occur before the guarded provider-request `try/catch`. A database/IPC failure can reject the action while leaving `streamingSessionId` populated and the draft assistant message stuck.
 
 **Recommendation:** include initial persistence in the same error boundary and roll back or mark the assistant message as failed in one place.
+
+### P1 — Updater private key must be protected
+
+The Ed25519 private key used to sign update bundles is required for every future release. If it is lost, existing installs cannot receive updates. If it leaks, an attacker can ship malicious updates that existing installs will trust.
+
+**Recommendation:** store the private key in a password manager or CI secret store, never commit it, and back it up offline.
 
 ### P2 — Tests do not cover core behavior
 
@@ -157,6 +174,7 @@ Text files are capped at 1 MiB in Rust, which is good. URL attachment fetches do
 - There is no README, PRODUCT.md, or DESIGN.md. This file gives future contributors a technical snapshot, but a short README should eventually cover setup, supported providers, data locations, and release steps.
 - The Rust `providers` table and provider IPC commands appear unused; the frontend stores providers as JSON under settings. Choose one storage path and remove the other when touching provider persistence.
 - The TypeScript IPC client exposes `factoryReset`, but the Danger Zone directly calls `persistence.clearAll`; the dedicated Rust command is currently redundant.
+- The updater signing private key (`tauri.key` or similar) must live outside version control. The matching public key is embedded in `src-tauri/tauri.conf.json`.
 
 ## UI and UX assessment
 
@@ -166,33 +184,34 @@ The Analytics redesign addresses the most obvious “AI-slop” symptoms: gradie
 
 The main UX weakness remains information architecture. A large settings catalog and three top-level modes imply capabilities beyond the current runtime. However, the tool system and permission modes now close the biggest honesty gap: models can actually modify files and run shell commands inside attached folders, and the user has clear per-chat control over autonomy.
 
-The biggest remaining honesty gap is image attachments, where the UI still implies vision support that the transport does not provide.
-
 The 800×560 minimum window size makes this intentionally desktop-only. That is reasonable for a terminal-capable Tauri app; responsive work should focus on the minimum supported desktop window, text scaling, and narrow settings layouts rather than mobile breakpoints.
 
 ## Suggested roadmap
 
-### Before a public beta
+### Before a public beta (completed for 1.0.0)
+
+1. ✅ Resizable panels and stable window title.
+2. ✅ Centered top navigation and tray click behavior.
+3. ✅ Expanded themes and chat title management.
+4. ✅ File/shell tool loop with permission modes.
+5. ✅ In-app updater wired to GitHub Releases.
+
+### Before the next stable release
 
 1. Correct or remove the misleading Uninstall/reset credential claims.
 2. Stop silent plaintext API-key fallback.
 3. Either send image attachments correctly or disable the feature.
 4. Mark remaining inactive settings as unavailable.
 5. Make chat persistence failures recover cleanly.
-
-### Before a stable release
-
-1. Add the six focused test areas listed above.
-2. Enforce URL attachment and backend image size limits.
-3. Clean up terminal sessions after process exit.
-4. Verify minimum-window layout, keyboard-only operation, screen-reader announcements, and light/dark contrast in a running build.
-5. Add release documentation and automated build checks.
+6. Add the six focused test areas listed above.
+7. Enforce URL attachment and backend image size limits.
+8. Clean up terminal sessions after process exit.
 
 ### Later, only when needed
 
 1. Split the large source files along existing feature boundaries.
 2. Add multimodal support per provider rather than through one overly generic payload abstraction.
-3. Add automatic updates only after release signing and distribution are settled.
+3. Add update signing automation in CI once the private-key storage is settled.
 
 ## Verification performed
 
@@ -206,8 +225,8 @@ The 800×560 minimum window size makes this intentionally desktop-only. That is 
 
 ## Overall assessment
 
-**Strength:** a real, compact desktop architecture with unusually broad functionality for a 0.1.0 app. Recent chat/provider improvements are genuinely wired to runtime behavior, the Analytics view no longer looks like a generic AI dashboard, and the new tool system gives the app a credible agent mode.
+**Strength:** a real, compact desktop architecture with unusually broad functionality for a 1.0.0 app. Recent chat/provider improvements are genuinely wired to runtime behavior, the Analytics view no longer looks like a generic AI dashboard, and the new tool system gives the app a credible agent mode. The UI polish and updater integration bring it to release-ready shape.
 
-**Main risk:** the UI still communicates more capability and stronger data guarantees than the runtime provides around image attachments, credential clearing, and the remaining inactive settings surface.
+**Main risk:** the UI still communicates more capability and stronger data guarantees than the runtime provides around image attachments, credential clearing, and the remaining inactive settings surface. The updater private key must be guarded carefully.
 
 **Best next move:** reduce the trust gap before adding more features. Fixing the credential/reset wording, the API-key fallback, and attachment behavior will improve release readiness more than another settings page or provider integration.

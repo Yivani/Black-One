@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Loader2 } from "lucide-react";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { Download, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,10 +29,14 @@ async function openExternal(url: string): Promise<void> {
   }
 }
 
+type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "installing" | "installed" | "error";
+
 export function AboutPage() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
-  const [checking, setChecking] = useState(false);
+  const [phase, setPhase] = useState<UpdatePhase>("idle");
+  const [progress, setProgress] = useState(0);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
 
   useEffect(() => {
@@ -55,19 +60,81 @@ export function AboutPage() {
       toast.info("Update checks run in the desktop build.");
       return;
     }
-    setChecking(true);
+    setPhase("checking");
+    setProgress(0);
+    setPendingUpdate(null);
     try {
+      // Prefer the native updater plugin; fall back to the manual GitHub release check.
+      const update = await check();
+      if (update) {
+        setPendingUpdate(update);
+        setUpdateResult({
+          status: "available",
+          latest: `v${update.version}`,
+          notes: update.body ?? null,
+        });
+        setPhase("available");
+        return;
+      }
+
       const result = await ipc.checkForUpdates();
       setUpdateResult(result);
-      if (result.status === "error") toast.error("Update check failed.");
+      if (result.status === "error") {
+        setPhase("error");
+        toast.error("Update check failed.");
+      } else if (result.status === "available") {
+        setPhase("available");
+      } else {
+        setPhase("idle");
+      }
     } catch {
+      setPhase("error");
+      setUpdateResult({ status: "error", latest: null, notes: null });
       toast.error("Update check failed.");
-    } finally {
-      setChecking(false);
     }
   };
 
-  const versionLabel = isTauri ? (appInfo ? appInfo.version : "…") : "0.1.0 (web)";
+  const installUpdate = async () => {
+    if (!isTauri) return;
+
+    if (pendingUpdate) {
+      setPhase("downloading");
+      try {
+        await pendingUpdate.downloadAndInstall((event) => {
+          switch (event.event) {
+            case "Started":
+              setPhase("downloading");
+              setProgress(0);
+              break;
+            case "Progress":
+              setProgress((prev) => prev + event.data.chunkLength);
+              break;
+            case "Finished":
+              setPhase("installed");
+              break;
+          }
+        });
+        setPhase("installed");
+        toast.success("Update installed. Restart Black One to finish.");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setPhase("error");
+        setUpdateResult((prev) => ({
+          ...prev,
+          status: "error",
+          notes: message,
+        }));
+        toast.error(`Update failed: ${message}`);
+      }
+      return;
+    }
+
+    // Fallback when only the manual check returned a newer tag.
+    toast.info("Please download the latest installer from GitHub Releases.");
+    void openExternal(`${GITHUB_REPO_URL}/releases`);
+  };
+
+  const versionLabel = isTauri ? (appInfo ? appInfo.version : "…") : "1.0.0 (web)";
   const commitUrl = appInfo?.commitSha
     ? `${GITHUB_REPO_URL}/commit/${appInfo.commitSha}`
     : null;
@@ -104,9 +171,14 @@ export function AboutPage() {
         </p>
       )}
       <div className="flex items-center gap-2 pt-2">
-        <Button onClick={() => void checkForUpdates()} disabled={checking}>
-          {checking && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-          Check for Updates
+        <Button
+          onClick={() => void checkForUpdates()}
+          disabled={phase === "checking" || phase === "downloading" || phase === "installing"}
+        >
+          {phase === "checking" && (
+            <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden />
+          )}
+          {phase === "checking" ? "Checking…" : "Check for Updates"}
         </Button>
         <Button
           variant="outline"
@@ -115,23 +187,62 @@ export function AboutPage() {
           Release Notes
         </Button>
       </div>
-      {updateResult?.status === "available" && (
+
+      {phase === "available" && updateResult?.status === "available" && (
         <div className="flex flex-wrap items-center justify-center gap-2">
           <Badge>Update available: {updateResult.latest}</Badge>
-          <Button
-            size="sm"
-            onClick={() => toast.info("The desktop updater installs on next restart.")}
-          >
-            Update Now
+          <Button size="sm" onClick={() => void installUpdate()}>
+            <Download className="mr-1.5 size-3.5" aria-hidden />
+            Download & Install
           </Button>
           <Button size="sm" variant="outline" onClick={() => setNotesOpen(true)}>
             See What's New
           </Button>
         </div>
       )}
-      {updateResult?.status === "up-to-date" && (
+
+      {(phase === "downloading" || phase === "installing") && (
+        <div className="flex flex-col items-center gap-1.5">
+          <Badge variant="secondary">
+            {phase === "downloading" ? "Downloading update…" : "Installing update…"}
+          </Badge>
+          {progress > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {Math.round(progress / 1024 / 1024)} MB received
+            </p>
+          )}
+        </div>
+      )}
+
+      {phase === "installed" && (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Badge variant="outline" className="text-green-600">
+            Update installed
+          </Badge>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (isTauri) {
+                void ipc.relaunchApp();
+              } else {
+                window.location.reload();
+              }
+            }}
+          >
+            <RotateCcw className="mr-1.5 size-3.5" aria-hidden />
+            Restart Now
+          </Button>
+        </div>
+      )}
+
+      {phase === "error" && (
+        <Badge variant="destructive">Update check failed</Badge>
+      )}
+
+      {phase === "idle" && updateResult?.status === "up-to-date" && (
         <Badge variant="secondary">You're up to date</Badge>
       )}
+
       <div className="mt-2 max-h-48 w-full overflow-auto whitespace-pre-wrap rounded-lg border border-border p-4 text-left font-mono text-xs text-muted-foreground">
         {notes || "No release notes loaded. Check for updates to fetch the latest notes."}
       </div>

@@ -7,7 +7,7 @@ use super::lock_db;
 use crate::state::AppState;
 use crate::utils::AppError;
 
-const RELEASES_URL: &str = "https://api.github.com/repos/black-one/black-one/releases/latest";
+const RELEASES_URL: &str = "https://api.github.com/repos/Yivani/Black-One/releases/latest";
 const MAX_NOTES_LEN: usize = 4000;
 
 #[derive(Debug, Serialize)]
@@ -132,6 +132,11 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, AppError> {
             notes,
         }),
     }
+}
+
+#[tauri::command]
+pub fn relaunch_app(app: tauri::AppHandle) {
+    app.restart();
 }
 
 #[tauri::command]
