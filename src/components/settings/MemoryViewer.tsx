@@ -119,7 +119,7 @@ export function MemoryViewer() {
   );
 
   return (
-    <div className="grid min-h-0 overflow-hidden rounded-lg border bg-background md:grid-cols-[12rem_minmax(0,1fr)]">
+    <div className="grid h-full min-h-0 overflow-hidden rounded-lg border bg-background md:grid-cols-[12rem_minmax(0,1fr)]">
       <aside className="flex min-h-0 flex-col border-b bg-muted/20 md:border-b-0 md:border-r">
         <div className="border-b p-4">
           <div className="flex items-center gap-2">
@@ -183,7 +183,7 @@ export function MemoryViewer() {
         </div>
       </aside>
 
-      <ScrollArea className="h-[min(66vh,38rem)] bg-muted/10">
+      <ScrollArea className="h-full min-h-0 bg-muted/10">
         <div className="min-h-full p-5 [background-image:radial-gradient(circle,hsl(var(--border))_1px,transparent_1px)] [background-size:18px_18px] sm:p-7">
           {loading && !bank ? (
             <div className="grid min-h-72 place-items-center text-sm text-muted-foreground">

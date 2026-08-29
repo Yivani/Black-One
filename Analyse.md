@@ -1,7 +1,7 @@
 # Black One — application analysis
 
 Last reviewed: 2026-08-29
-Version: 1.0.0
+Version: 1.0.1
 
 ## Executive summary
 

@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system', 'memory')),
     content TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     tokens_used INTEGER,
@@ -62,6 +62,53 @@ CREATE TABLE IF NOT EXISTS providers (
 );
 ";
 
+const MEMORY_ROLE_MIGRATION: &str = "
+BEGIN;
+ALTER TABLE messages RENAME TO messages_old;
+
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system', 'memory')),
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    tokens_used INTEGER,
+    model_id TEXT,
+    parent_id TEXT,
+    status TEXT NOT NULL DEFAULT 'complete',
+    citations TEXT,
+    attachments TEXT,
+    metadata TEXT
+);
+
+INSERT INTO messages SELECT * FROM messages_old;
+
+DROP TABLE messages_old;
+
+CREATE INDEX idx_messages_session_created
+    ON messages (session_id, created_at);
+
+COMMIT;
+";
+
+/// Recreates the messages table if it was created with the old role CHECK
+/// constraint that did not include 'memory'. Existing data is preserved.
+fn migrate_memory_role(conn: &Connection) -> Result<(), AppError> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version < 1 {
+        let sql: String = conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'",
+            [],
+            |row| row.get(0),
+        )?;
+        if !sql.contains("'memory'") {
+            conn.execute_batch(MEMORY_ROLE_MIGRATION)?;
+        }
+        conn.pragma_update(None, "user_version", 1)?;
+    }
+    Ok(())
+}
+
 /// Opens (creating if needed) the SQLite database in the app data directory,
 /// applies pragmas and migrations, and returns the managed app state.
 pub fn init(app: &tauri::App) -> Result<AppState, AppError> {
@@ -71,6 +118,7 @@ pub fn init(app: &tauri::App) -> Result<AppState, AppError> {
     let conn = Connection::open(data_dir.join("black-one.db"))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.execute_batch(MIGRATIONS)?;
+    migrate_memory_role(&conn)?;
 
     Ok(AppState {
         db: std::sync::Mutex::new(conn),

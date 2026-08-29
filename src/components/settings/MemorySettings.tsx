@@ -263,14 +263,16 @@ export function MemorySettings() {
       </Dialog>
 
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden p-5">
+        <DialogContent className="h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-none overflow-hidden p-5 flex flex-col">
           <DialogHeader>
             <DialogTitle>Memory viewer</DialogTitle>
             <DialogDescription>
               Stored facts extracted from your conversations.
             </DialogDescription>
           </DialogHeader>
-          <MemoryViewer />
+          <div className="flex-1 min-h-0">
+            <MemoryViewer />
+          </div>
         </DialogContent>
       </Dialog>
     </div>
