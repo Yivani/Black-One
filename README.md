@@ -1,26 +1,29 @@
 <div align="center">
-  <img src="src-tauri/icons/logo.svg" width="88" alt="Black One logo">
+  <img src="public/readme-logo.svg" width="120" alt="Black One logo">
   <h1>Black One</h1>
   <p><strong>A local-first desktop workspace for AI chat, code, and agent tasks.</strong></p>
 </div>
 
-Black One keeps conversations and settings on your device while letting you work with cloud or local model providers. It combines streaming chat, project-aware tools, and a native terminal in one restrained desktop interface.
+Black One keeps conversations and settings on your device while letting you work with cloud or local model providers. It combines streaming chat, project-aware tools, a native multi-terminal, a priority-based Todo board, and long-term memory in one restrained desktop interface.
 
 > Black One is early software. Review tool actions before approving them and avoid testing with data you cannot replace.
 
 ## What it does
 
-- Connects to OpenAI, Anthropic, compatible endpoints, and local models
+- Connects to OpenAI, Anthropic, OpenRouter, xAI, Kimi, compatible endpoints, and local models
 - Streams chats with sessions, folders, search, archive, branching, and export
 - Runs file and shell tools inside folders you explicitly attach
-- Provides Manual, Auto, and YOLO approval modes for agent actions
+- Provides Manual, Auto, YOLO, and Blocked permission modes for agent actions
 - Includes multiple native terminal sessions powered by `portable-pty`
+- Tracks tasks on a Critical → High → Mid → Low Todo board with per-priority models
+- Remembers facts you explicitly save via long-term memory
+- Installs CLI coding agents (Codex, Claude Code, Gemini CLI, Kimi Code, OpenCode) from Settings
 - Stores desktop chats in SQLite and API keys in the operating-system keychain
 - Records categorized failures in Command Center → Errors, with an opt-in GitHub issue handoff
 
 ## Install
 
-Download a packaged build from [GitHub Releases](https://github.com/Yivani/Black-One/releases). Release artifacts will appear there as they become available.
+Download the latest Windows installer from [GitHub Releases](https://github.com/Yivani/Black-One/releases).
 
 ## Develop
 
@@ -41,6 +44,12 @@ Useful checks:
 
 ```bash
 npm run build
+npm run test:memory
+npm run test:prompts
+npm run test:display
+npm run test:todo
+npm run test:cli
+npm run test:tools
 npm run test:errors
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
@@ -51,6 +60,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 React + TypeScript
 ├── Zustand application state
 ├── provider streaming and tool runtime
+├── memory, todo, and terminal stores
 └── persistence adapter
     ├── IndexedDB in browser preview
     └── Tauri commands on desktop
