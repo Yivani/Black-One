@@ -13,47 +13,43 @@ import {
   useListRef,
   type RowComponentProps,
 } from "react-window";
-import type { Message } from "@/types/chat";
 import { Button } from "@/components/ui/button";
 import { ContextBanner } from "@/components/chat/ContextBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
-import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { Logo } from "@/components/shared/Logo";
 import { useChat } from "@/hooks/useChat";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
+import { groupChatMessages, type ChatDisplayRow } from "@/lib/chatDisplay";
 import { MESSAGE_VIRTUALIZATION_THRESHOLD } from "@/lib/constants";
 
 const AT_BOTTOM_THRESHOLD_PX = 80;
 
 interface MessageRowsData {
-  messages: Message[];
-  showTyping: boolean;
+  rows: ChatDisplayRow[];
 }
 
 function MessageRow({
   index,
   style,
   ariaAttributes,
-  messages,
-  showTyping,
+  rows,
 }: RowComponentProps<MessageRowsData>) {
-  const isTypingRow = showTyping && index === messages.length;
+  const row = rows[index];
   return (
     <div style={style} {...ariaAttributes}>
       <div className="mx-auto w-full max-w-4xl px-6 pb-6">
-        {isTypingRow ? (
-          <TypingIndicator />
-        ) : (
-          <MessageBubble message={messages[index]} />
-        )}
+        <MessageBubble
+          message={row.message}
+          turnMessages={row.turnMessages}
+        />
       </div>
     </div>
   );
 }
 
 export function MessageList() {
-  const { messages, isThinking, contextMessageCount } = useChat();
+  const { messages, contextMessageCount } = useChat();
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const viewMode = useUiStore((s) => s.viewMode);
 
@@ -62,30 +58,19 @@ export function MessageList() {
   const atBottomRef = useRef(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
-  const lastMessage =
-    messages.length > 0 ? messages[messages.length - 1] : null;
-  const showTyping =
-    isThinking &&
-    lastMessage !== null &&
-    lastMessage.role === "assistant" &&
-    lastMessage.status === "streaming" &&
-    lastMessage.content.length === 0;
-
-  const virtualized = messages.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
-  const rowCount = messages.length + (showTyping ? 1 : 0);
+  const rows = useMemo(() => groupChatMessages(messages), [messages]);
+  const virtualized = rows.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
+  const rowCount = rows.length;
   const rowHeight = useDynamicRowHeight({
     defaultRowHeight: 120,
     key: activeSessionId ?? "none",
   });
   const rowProps = useMemo<MessageRowsData>(
-    () => ({ messages, showTyping }),
-    [messages, showTyping],
+    () => ({ rows }),
+    [rows],
   );
   const rowKey = useCallback(
-    (index: number, data: MessageRowsData) =>
-      index < data.messages.length
-        ? data.messages[index].id
-        : "typing-indicator",
+    (index: number, data: MessageRowsData) => data.rows[index].id,
     [],
   );
 
@@ -121,7 +106,7 @@ export function MessageList() {
     } else {
       setShowScrollButton(true);
     }
-  }, [messages, showTyping, scrollToBottom]);
+  }, [messages, scrollToBottom]);
 
   // Reset scroll tracking when switching chats.
   useEffect(() => {
@@ -174,10 +159,13 @@ export function MessageList() {
           className="min-h-0 flex-1 overflow-y-auto px-6 py-4"
         >
           <div className="mx-auto w-full max-w-4xl space-y-7">
-            {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
+            {rows.map((row) => (
+              <MessageBubble
+                key={row.id}
+                message={row.message}
+                turnMessages={row.turnMessages}
+              />
             ))}
-            {showTyping && <TypingIndicator />}
           </div>
         </div>
       )}

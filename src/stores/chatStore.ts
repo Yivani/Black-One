@@ -33,6 +33,7 @@ import {
   executeTool,
   extractAttachedFolders,
   parseToolCalls,
+  parseToolResults,
   serializeToolResult,
   shouldAutoApprove,
   stripToolCalls,
@@ -234,6 +235,20 @@ export const useChatStore = create<ChatState>()(
       set((state) => {
         state.messagesBySession[sessionId] = messages;
       });
+      const resolved = new Set(
+        messages
+          .flatMap((message) =>
+            message.toolResults ??
+            (message.role === "system" ? parseToolResults(message.content) : []),
+          )
+          .map((call) => call.id),
+      );
+      const pending = messages
+        .flatMap((message) =>
+          message.toolCalls ?? parseToolCalls(message.content, message.id),
+        )
+        .filter((call) => call.status === "pending" && !resolved.has(call.id));
+      useToolRuntimeStore.getState().queuePending(pending);
     },
 
     sendMessage: async (

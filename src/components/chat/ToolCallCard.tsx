@@ -57,6 +57,7 @@ function formatArgs(call: ToolCall): string {
 export function ToolCallCard({ call, context, sessionId, showApprove = false }: ToolCallCardProps) {
   // Deep-clone the prop so we don't hold onto any Immer proxies that can be revoked after state updates.
   const [localCall, setLocalCall] = useState<ToolCall>(() => cloneToolCall(call));
+  const [deciding, setDeciding] = useState(false);
   const approve = useToolRuntimeStore((s) => s.approve);
   const deny = useToolRuntimeStore((s) => s.deny);
   const submitToolResults = useChatStore((s) => s.submitToolResults);
@@ -72,36 +73,62 @@ export function ToolCallCard({ call, context, sessionId, showApprove = false }: 
   }, [call]);
 
   const handleApprove = async () => {
-    const approved = approve(localCall.id);
-    if (!approved) return;
+    if (deciding) return;
+    setDeciding(true);
+    const approved =
+      approve(localCall.id) ??
+      cloneToolCall({ ...localCall, status: "approved" });
     setLocalCall({ ...approved, status: "running" });
     const executed = await executeTool(approved, context);
     setLocalCall(executed);
     const remaining = useToolRuntimeStore.getState().pendingCalls.length;
-    await submitToolResults(sessionId, [executed], remaining === 0);
+    try {
+      await submitToolResults(sessionId, [executed], remaining === 0);
+    } finally {
+      setDeciding(false);
+    }
   };
 
   const handleDeny = () => {
-    const denied = deny(localCall.id);
-    if (!denied) return;
+    if (deciding) return;
+    setDeciding(true);
+    const denied =
+      deny(localCall.id) ??
+      cloneToolCall({
+        ...localCall,
+        status: "denied",
+        result: { success: false, error: "User denied this action." },
+      });
     setLocalCall(denied);
     const remaining = useToolRuntimeStore.getState().pendingCalls.length;
-    void submitToolResults(sessionId, [denied], remaining === 0);
+    void submitToolResults(sessionId, [denied], remaining === 0).finally(() =>
+      setDeciding(false),
+    );
   };
 
   return (
-    <div
+    <Collapsible
+      defaultOpen={isError}
       className={cn(
-        "my-2 overflow-hidden rounded-md border border-border/70 bg-muted/20 text-xs",
-        isError && "border-destructive/35",
-        isDenied && "border-amber-500/35",
+        "text-xs",
+        isError && "bg-destructive/5",
+        isDenied && "bg-amber-500/5",
       )}
     >
-      <div className="flex min-h-9 items-center justify-between gap-3 px-2.5 py-1.5">
+      <div className="flex min-h-10 items-center justify-between gap-3 px-3 py-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-muted-foreground">{TOOL_ICONS[localCall.name] ?? null}</span>
-          <span className="shrink-0 font-medium">{TOOL_LABELS[localCall.name] ?? localCall.name}</span>
-          <span className="truncate text-muted-foreground">{formatArgs(localCall)}</span>
+          <span className="text-muted-foreground">
+            {TOOL_ICONS[localCall.name] ?? null}
+          </span>
+          <span className="shrink-0 font-medium">
+            {TOOL_LABELS[localCall.name] ?? localCall.name}
+          </span>
+          <span
+            className="truncate font-mono text-[10px] text-muted-foreground"
+            title={formatArgs(localCall)}
+          >
+            {formatArgs(localCall)}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {isDone && <Check className="size-3.5 text-green-500" aria-hidden />}
@@ -111,18 +138,22 @@ export function ToolCallCard({ call, context, sessionId, showApprove = false }: 
           {showApprove && isPending && (
             <>
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 px-2 text-[11px]"
+                className="h-7 px-2.5 text-[11px]"
                 onClick={handleDeny}
+                disabled={deciding}
               >
                 Deny
               </Button>
               <Button
+                type="button"
                 variant="outline"
                 size="sm"
-                className="h-7 px-2 text-[11px]"
+                className="h-7 border-foreground/30 px-2.5 text-[11px]"
                 onClick={handleApprove}
+                disabled={deciding}
               >
                 Allow
               </Button>
@@ -132,22 +163,25 @@ export function ToolCallCard({ call, context, sessionId, showApprove = false }: 
       </div>
 
       {localCall.result && (localCall.result.output || localCall.result.error) && (
-        <Collapsible defaultOpen={isError || isDenied}>
+        <>
           <CollapsibleTrigger asChild>
             <button
               type="button"
-              className="w-full border-t border-border/50 bg-muted/20 px-3 py-1.5 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
+              className={cn(
+                "w-full px-3 pb-2 text-left text-[10px] text-muted-foreground transition-standard hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                localCall.result.error && "text-destructive",
+              )}
             >
               {localCall.result.error ? "Show error" : "Show output"}
             </button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[10px]">
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words border-t border-border/50 bg-background/45 px-3 py-2 font-mono text-[10px] leading-5">
               {localCall.result.error ?? localCall.result.output}
             </pre>
           </CollapsibleContent>
-        </Collapsible>
+        </>
       )}
-    </div>
+    </Collapsible>
   );
 }

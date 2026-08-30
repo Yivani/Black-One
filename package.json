@@ -1,7 +1,7 @@
 {
   "name": "black-one",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Black One — The agent that grows with you.",
   "license": "MIT",
   "type": "module",
@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test:memory": "node --experimental-strip-types --test src/lib/memoryPrompt.test.ts src/lib/memoryCore.test.ts",
     "test:prompts": "node --experimental-strip-types --test src/lib/modePrompt.test.ts",
+    "test:display": "node --experimental-strip-types --test src/lib/chatDisplay.test.ts",
     "test:todo": "node --experimental-strip-types --test src/lib/todoCore.test.ts",
     "test:tools": "node --experimental-strip-types --test src/lib/toolProtocol.test.ts",
     "test:errors": "node --experimental-strip-types --test src/lib/errors.test.ts",

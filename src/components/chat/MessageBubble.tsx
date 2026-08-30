@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
   Brain,
@@ -10,6 +10,7 @@ import {
   GitBranch,
   Image,
   Link2,
+  Loader2,
   Pencil,
   RefreshCw,
   TriangleAlert,
@@ -19,7 +20,11 @@ import { toast } from "sonner";
 import type { AttachmentKind, Message } from "@/types/chat";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
@@ -38,6 +43,7 @@ import {
   parseToolCalls,
   parseToolResults,
   stripToolCalls,
+  type ToolCall,
   type ToolContext,
 } from "@/lib/tools";
 
@@ -45,6 +51,7 @@ const EMPTY_MESSAGES: Message[] = [];
 
 interface MessageBubbleProps {
   message: Message;
+  turnMessages?: Message[];
 }
 
 const ATTACHMENT_ICONS: Record<AttachmentKind, LucideIcon> = {
@@ -116,7 +123,119 @@ function parseMemoryPayload(content: string): MemoryEventPayload | null {
   return null;
 }
 
-export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
+interface AgentActivityProps {
+  reasoning: string[];
+  calls: ToolCall[];
+  context: ToolContext;
+  sessionId: string;
+  running: boolean;
+}
+
+function AgentActivity({
+  reasoning,
+  calls,
+  context,
+  sessionId,
+  running,
+}: AgentActivityProps) {
+  const pendingCount = calls.filter((call) => call.status === "pending").length;
+  const hasPending = pendingCount > 0;
+  const [open, setOpen] = useState(running || hasPending);
+
+  useEffect(() => {
+    setOpen(running || hasPending);
+  }, [running, hasPending]);
+
+  const detail = hasPending
+    ? "Approval required"
+    : calls.length > 0
+      ? `${calls.length} ${calls.length === 1 ? "action" : "actions"}`
+      : reasoning.length > 0
+        ? "Reasoning"
+        : "Working";
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(next) => setOpen(hasPending ? true : next)}
+      className={cn(
+        "mb-3 overflow-hidden rounded-md border border-border/70 bg-muted/10",
+        hasPending && "border-amber-500/40",
+      )}
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex min-h-10 w-full items-center gap-2 px-3 py-2 text-left transition-standard hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          aria-label={open ? "Hide thinking details" : "Show thinking details"}
+        >
+          {running ? (
+            <Loader2
+              className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+              aria-hidden
+            />
+          ) : (
+            <Brain className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          )}
+          <span className="text-xs font-medium text-foreground">Thinking</span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-[11px] text-muted-foreground",
+              hasPending && "text-amber-500",
+            )}
+          >
+            {detail}
+          </span>
+          <ChevronDown
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-180",
+            )}
+            aria-hidden
+          />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="border-t border-border/60">
+          {reasoning.map((entry, index) => (
+            <div
+              key={`reasoning-${index}`}
+              className="border-b border-border/50 px-3 py-2 text-xs text-muted-foreground last:border-b-0"
+            >
+              <MarkdownRenderer
+                content={entry}
+                className="text-xs text-muted-foreground [&_.message-body]:text-xs"
+              />
+            </div>
+          ))}
+          {calls.length > 0 && (
+            <div className="divide-y divide-border/50">
+              {calls.map((call) => (
+                <ToolCallCard
+                  key={call.id}
+                  call={call}
+                  context={context}
+                  sessionId={sessionId}
+                  showApprove={call.status === "pending"}
+                />
+              ))}
+            </div>
+          )}
+          {reasoning.length === 0 && calls.length === 0 && (
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              Preparing the next step...
+            </p>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+export const MessageBubble = memo(function MessageBubble({
+  message,
+  turnMessages,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isMemory = message.role === "memory";
   const showAvatars = useSettingsStore(
@@ -140,7 +259,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
-  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const activityMessages = turnMessages ?? [message];
 
   const sessionMessages = useChatStore(
     (s) => s.messagesBySession[message.sessionId] ?? EMPTY_MESSAGES,
@@ -163,8 +282,21 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
       message.toolWorkspace?.length ? message.toolWorkspace : attachedFolders,
   };
   const toolCalls = useMemo(
-    () => message.toolCalls ?? parseToolCalls(message.content, message.id),
-    [message.content, message.id, message.toolCalls],
+    () =>
+      activityMessages.flatMap(
+        (entry) =>
+          entry.toolCalls ?? parseToolCalls(entry.content, entry.id),
+      ),
+    [activityMessages],
+  );
+  const reasoningEntries = useMemo(
+    () =>
+      showReasoningBlocks
+        ? activityMessages
+            .map((entry) => entry.reasoning?.trim())
+            .filter((entry): entry is string => Boolean(entry))
+        : [],
+    [activityMessages, showReasoningBlocks],
   );
   const visibleToolCalls = useMemo(() => {
     const results = new Map(
@@ -178,9 +310,22 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
     return toolCalls.map((call) => results.get(call.id) ?? call);
   }, [sessionMessages, toolCalls]);
   const displayContent = useMemo(
-    () => stripToolCalls(message.content),
-    [message.content],
+    () =>
+      toolCalls.some((call) => call.id.startsWith(message.id)) ||
+      /<tool(?:\s|>)/i.test(message.content)
+        ? ""
+        : stripToolCalls(message.content),
+    [message.content, message.id, toolCalls],
   );
+  const activityRunning =
+    message.status === "streaming" ||
+    visibleToolCalls.some(
+      (call) => call.status === "approved" || call.status === "running",
+    );
+  const hasActivity =
+    activityRunning ||
+    reasoningEntries.length > 0 ||
+    visibleToolCalls.length > 0;
 
   if (isMemory) {
     const payload = parseMemoryPayload(message.content);
@@ -311,6 +456,15 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
           <>
             {message.status === "error" ? (
               <div className="space-y-3">
+                {hasActivity && (
+                  <AgentActivity
+                    reasoning={reasoningEntries}
+                    calls={visibleToolCalls}
+                    context={toolContext}
+                    sessionId={message.sessionId}
+                    running={false}
+                  />
+                )}
                 {displayContent.trim().length > 0 && (
                   <MarkdownRenderer content={displayContent} />
                 )}
@@ -343,49 +497,36 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
               </div>
             ) : message.status === "streaming" ? (
               <div aria-live="polite">
-                <MarkdownRenderer content={message.content} />
-                <StreamingCursor />
+                {hasActivity && (
+                  <AgentActivity
+                    reasoning={reasoningEntries}
+                    calls={visibleToolCalls}
+                    context={toolContext}
+                    sessionId={message.sessionId}
+                    running={activityRunning}
+                  />
+                )}
+                {displayContent.trim().length > 0 && (
+                  <>
+                    <MarkdownRenderer content={displayContent} />
+                    <StreamingCursor />
+                  </>
+                )}
               </div>
             ) : (
               <>
-                {showReasoningBlocks && message.reasoning && (
-                  <Collapsible
-                    open={reasoningOpen}
-                    onOpenChange={setReasoningOpen}
-                    className="mb-3"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setReasoningOpen((v) => !v)}
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground transition-standard hover:text-foreground"
-                    >
-                      <ChevronDown
-                        className={cn(
-                          "size-3.5 shrink-0 transition-transform",
-                          reasoningOpen && "rotate-180",
-                        )}
-                        aria-hidden
-                      />
-                      Reasoning
-                    </button>
-                    <CollapsibleContent>
-                      <div className="mt-1.5 rounded-md border border-border/60 bg-muted/40 p-2.5 text-xs text-muted-foreground">
-                        <MarkdownRenderer content={message.reasoning} />
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
+                {hasActivity && (
+                  <AgentActivity
+                    reasoning={reasoningEntries}
+                    calls={visibleToolCalls}
+                    context={toolContext}
+                    sessionId={message.sessionId}
+                    running={activityRunning}
+                  />
                 )}
-                <MarkdownRenderer content={displayContent} />
-                {visibleToolCalls.length > 0 &&
-                  visibleToolCalls.map((call) => (
-                    <ToolCallCard
-                      key={call.id}
-                      call={call}
-                      context={toolContext}
-                      sessionId={message.sessionId}
-                      showApprove={call.status === "pending"}
-                    />
-                  ))}
+                {displayContent.trim().length > 0 && (
+                  <MarkdownRenderer content={displayContent} />
+                )}
                 {message.status === "stopped" && (
                   <span className="text-xs text-muted-foreground">
                     (stopped)
