@@ -103,7 +103,18 @@ export const useSettingsStore = create<SettingsState>()(
 
     updateSection: (section, patch) => {
       set((state) => {
-        Object.assign(state.settings[section], patch);
+        const current = state.settings[section];
+        if (
+          typeof current !== "object" ||
+          current === null ||
+          Array.isArray(current)
+        ) {
+          // Top-level primitive fields (e.g. onboardingCompleted) cannot be
+          // Object.assign-ed; replace them directly.
+          state.settings[section] = patch as AppSettings[typeof section];
+        } else {
+          Object.assign(current, patch);
+        }
       });
       if (section === "tools" && "permission" in patch) {
         syncToolPermission(get().settings.tools.permission);

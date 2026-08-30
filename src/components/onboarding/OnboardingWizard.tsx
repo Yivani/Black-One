@@ -1,31 +1,44 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Check,
   ChevronRight,
+  Circle,
+  Download,
   Globe,
   Loader2,
   Moon,
   Monitor,
   Palette,
   Sparkles,
+  Square,
   Sun,
+  TerminalSquare,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSettings } from "@/hooks/useSettings";
 import { useResolvedDark } from "@/hooks/useTheme";
-import { ACCENT_COLORS, APP_NAME, APP_TAGLINE, FONT_SIZE_SCALE } from "@/lib/constants";
-import { isTauri } from "@/lib/ipc";
+import { ACCENT_COLORS, APP_NAME, APP_TAGLINE } from "@/lib/constants";
+import { CLI_TOOLS, type CliAction, type CliTool } from "@/lib/cliTools";
+import { ipc, isTauri, type CliJob, type CliToolStatus } from "@/lib/ipc";
 import { THEME_PRESETS, type ThemePreset } from "@/lib/themes";
 import { cn } from "@/lib/utils";
-import { useModelStore } from "@/stores/modelStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { AccentColorId, FontSize, ThemeMode, ThemePresetId } from "@/types/settings";
-import type { Provider } from "@/types/models";
+
+const ACTION_PROGRESS: Record<CliAction, string> = {
+  install: "Installing",
+  update: "Updating",
+  uninstall: "Uninstalling",
+};
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 const LANGUAGE_OPTIONS: Array<{ id: string; label: string; flag: string; ready: boolean }> = [
   { id: "en", label: "English", flag: "🇺🇸", ready: true },
@@ -45,53 +58,51 @@ const FONT_SIZE_OPTIONS: Array<{ id: FontSize; label: string; glyphClass: string
   { id: "large", label: "Large", glyphClass: "text-base" },
 ];
 
-const PROVIDER_SETUP: Record<
-  string,
-  { url: string; label: string; description: string }
-> = {
-  openai: {
-    url: "https://platform.openai.com/api-keys",
-    label: "Open OpenAI keys",
-    description: "Create a Platform API key. ChatGPT subscriptions do not include API access.",
-  },
-  anthropic: {
-    url: "https://console.anthropic.com/settings/keys",
-    label: "Open Anthropic keys",
-    description: "Create a Claude API key in the Anthropic Console.",
-  },
-  openrouter: {
-    url: "https://openrouter.ai/settings/keys",
-    label: "Open OpenRouter keys",
-    description: "Sign in to OpenRouter and create an API key.",
-  },
-  xai: {
-    url: "https://console.x.ai/",
-    label: "Open xAI Console",
-    description: "Create an xAI API key for Grok models.",
-  },
-  opencode: {
-    url: "https://opencode.ai/auth",
-    label: "Open OpenCode",
-    description: "Sign in to OpenCode Zen, add billing if required, and copy an API key.",
-  },
-  kimi: {
-    url: "https://platform.kimi.ai/console/api-keys",
-    label: "Open Kimi Platform keys",
-    description: "Use a pay-as-you-go Kimi Platform key. Kimi Code membership keys do not work here.",
-  },
-  "kimi-code": {
-    url: "https://www.kimi.com/code/console",
-    label: "Open Kimi Code Console",
-    description: "Use a Kimi Code Console key tied to an active Kimi membership. Platform keys do not work here.",
-  },
-};
-
-function openExternal(url: string): void {
-  if (isTauri) {
-    void import("@tauri-apps/plugin-opener").then((module) => module.openUrl(url));
-    return;
+function ToolState({
+  status,
+  job,
+}: {
+  status?: CliToolStatus;
+  job?: CliJob;
+}) {
+  if (job?.status === "running" || job?.status === "cancelling") {
+    return (
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-foreground" aria-live="polite">
+        <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
+        {job.status === "cancelling" ? "Cancelling..." : `${ACTION_PROGRESS[job.action]}...`}
+      </span>
+    );
   }
-  window.open(url, "_blank", "noopener,noreferrer");
+  if (job?.status === "error") {
+    return (
+      <span className="flex min-w-0 items-start gap-1.5 text-xs text-destructive" role="status">
+        <X className="mt-0.5 size-3 shrink-0" aria-hidden />
+        <span className="line-clamp-2 break-words">{job.message}</span>
+      </span>
+    );
+  }
+  if (job?.status === "cancelled") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400" role="status">
+        <Square className="size-3" aria-hidden />
+        Cancelled
+      </span>
+    );
+  }
+  if (status?.installed) {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400" role="status">
+        <Check className="size-3" aria-hidden />
+        Installed{status.version ? ` v${status.version}` : ""}
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Circle className="size-3" aria-hidden />
+      Not installed
+    </span>
+  );
 }
 
 function ThemePreview({ preset, dark }: { preset: ThemePreset; dark: boolean }) {
@@ -132,33 +143,79 @@ function ThemePreview({ preset, dark }: { preset: ThemePreset; dark: boolean }) 
 
 export function OnboardingWizard() {
   const { settings, updateSection } = useSettings();
-  const providers = useModelStore((s) => s.providers);
-  const setApiKey = useModelStore((s) => s.setApiKey);
-  const testConnection = useModelStore((s) => s.testConnection);
-  const refreshModels = useModelStore((s) => s.refreshModels);
-  const selectModel = useModelStore((s) => s.selectModel);
   const dark = useResolvedDark();
 
   const [step, setStep] = useState(0);
   const [language, setLanguage] = useState("en");
-  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [apiKeyInput, setApiKeyInput] = useState("");
-  const [connecting, setConnecting] = useState(false);
-  const [connectedProviderId, setConnectedProviderId] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(settings.appearance.theme);
   const [themePreset, setThemePreset] = useState<ThemePresetId>(settings.appearance.themePreset);
   const [accentColor, setAccentColor] = useState<AccentColorId>(settings.appearance.accentColor);
   const [fontSize, setFontSize] = useState<FontSize>(settings.appearance.fontSize);
 
-  const selectableProviders = useMemo(
-    () => providers.filter((p) => p.id !== "demo"),
-    [providers],
+  const [cliStatuses, setCliStatuses] = useState<CliToolStatus[]>([]);
+  const [cliJobs, setCliJobs] = useState<CliJob[]>([]);
+  const [cliLoading, setCliLoading] = useState(true);
+
+  const refreshCliStatuses = useCallback(async () => {
+    if (!isTauri) return;
+    try {
+      setCliStatuses(await ipc.listCliToolStatuses());
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setCliLoading(false);
+    }
+  }, []);
+
+  const refreshCliJobs = useCallback(async () => {
+    if (!isTauri) return;
+    try {
+      const nextJobs = await ipc.listCliJobs();
+      setCliJobs(nextJobs);
+      if (!nextJobs.some((job) => job.status === "running" || job.status === "cancelling")) {
+        await refreshCliStatuses();
+      }
+    } catch (error) {
+      toast.error(errorText(error));
+    }
+  }, [refreshCliStatuses]);
+
+  useEffect(() => {
+    if (step !== 1) return;
+    void Promise.all([refreshCliStatuses(), refreshCliJobs()]);
+  }, [step, refreshCliStatuses, refreshCliJobs]);
+
+  const hasActiveCliJob = cliJobs.some(
+    (job) => job.status === "running" || job.status === "cancelling",
+  );
+  useEffect(() => {
+    if (!hasActiveCliJob) return;
+    const timer = window.setInterval(() => void refreshCliJobs(), 600);
+    return () => window.clearInterval(timer);
+  }, [hasActiveCliJob, refreshCliJobs]);
+
+  const statusByTool = useMemo(
+    () => new Map(cliStatuses.map((status) => [status.id, status])),
+    [cliStatuses],
+  );
+  const jobByTool = useMemo(
+    () => new Map(cliJobs.map((job) => [job.toolId, job])),
+    [cliJobs],
   );
 
-  const selectedProvider = useMemo(
-    () => selectableProviders.find((p) => p.id === selectedProviderId) ?? null,
-    [selectableProviders, selectedProviderId],
-  );
+  const installCliTool = async (tool: CliTool) => {
+    if (!isTauri) {
+      toast.info("CLI installation is only available in the desktop build.");
+      return;
+    }
+    try {
+      const job = await ipc.runCliOperation(tool.id, "install");
+      setCliJobs((current) => [...current.filter((item) => item.toolId !== tool.id), job]);
+      toast.success(`Installing ${tool.name} in the background.`);
+    } catch (error) {
+      toast.error(errorText(error));
+    }
+  };
 
   const applyAppearance = () => {
     updateSection("appearance", {
@@ -169,44 +226,8 @@ export function OnboardingWizard() {
     });
   };
 
-  const handleConnect = async () => {
-    if (!selectedProvider) return;
-    const key = apiKeyInput.trim();
-    if (!key) {
-      toast.error("Please paste an API key.");
-      return;
-    }
-    if (!isTauri) {
-      toast.info("Provider connection is only available in the desktop build.");
-      return;
-    }
-    setConnecting(true);
-    try {
-      await setApiKey(selectedProvider.id, key);
-      const ok = await testConnection(selectedProvider.id);
-      if (ok) {
-        await refreshModels();
-        setConnectedProviderId(selectedProvider.id);
-        toast.success(`${selectedProvider.name} connected.`);
-      } else {
-        toast.error(`${selectedProvider.name} connection failed.`);
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to connect provider.");
-    } finally {
-      setConnecting(false);
-    }
-  };
-
   const handleFinish = () => {
     applyAppearance();
-    if (connectedProviderId) {
-      const provider = providers.find((p) => p.id === connectedProviderId);
-      const firstModel = provider?.models[0];
-      if (firstModel?.selectionId) {
-        selectModel(firstModel.selectionId);
-      }
-    }
     updateSection("onboardingCompleted", true);
   };
 
@@ -217,14 +238,14 @@ export function OnboardingWizard() {
 
   const steps = [
     { label: "Language" },
-    { label: "Provider" },
+    { label: "CLI Tools" },
     { label: "Appearance" },
     { label: "Finish" },
   ];
 
   return (
-    <div className="flex h-screen w-screen flex-col items-center justify-center bg-background p-4 text-foreground">
-      <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+    <div className="flex min-h-screen w-screen items-start justify-center overflow-y-auto bg-background p-4 text-foreground sm:items-center">
+      <div className="my-4 w-full max-w-3xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-3">
@@ -260,7 +281,7 @@ export function OnboardingWizard() {
         </div>
 
         {/* Content */}
-        <div className="px-6 py-8">
+        <div className="max-h-[calc(100vh-180px)] overflow-y-auto px-6 py-8">
           {step === 0 && (
             <div className="space-y-6">
               <div className="text-center">
@@ -307,96 +328,70 @@ export function OnboardingWizard() {
           )}
 
           {step === 1 && (
-            <div className="space-y-6">
+            <div className="space-y-5">
               <div>
-                <h2 className="text-xl font-semibold tracking-tight">Connect a provider</h2>
+                <h2 className="text-xl font-semibold tracking-tight">Install CLI tools</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Choose the AI provider you want to use. You can add more later in Settings.
+                  Black One uses terminal coding agents. Install the ones you want now, or add them later in Settings.
                 </p>
               </div>
 
-              <div role="radiogroup" aria-label="AI provider" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {selectableProviders.map((provider) => {
-                  const selected = selectedProviderId === provider.id;
-                  const connected = connectedProviderId === provider.id;
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                Installations run in the background without opening a shell window.
+              </p>
+
+              <div className="divide-y divide-border border-y border-border">
+                {CLI_TOOLS.map((tool) => {
+                  const status = statusByTool.get(tool.id);
+                  const job = jobByTool.get(tool.id);
+                  const active = job?.status === "running" || job?.status === "cancelling";
                   return (
-                    <button
-                      key={provider.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => {
-                        setSelectedProviderId(provider.id);
-                        setApiKeyInput("");
-                      }}
-                      className={cn(
-                        "relative rounded-lg border border-border p-4 text-left transition-colors hover:bg-accent/30",
-                        selected && "border-primary ring-1 ring-primary",
-                      )}
+                    <section
+                      key={tool.id}
+                      className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium">{provider.name}</span>
-                        {connected && (
-                          <span className="flex size-4 items-center justify-center rounded-full bg-emerald-500 text-white">
-                            <Check className="size-3" />
-                          </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <TerminalSquare className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                          <h3 className="text-sm font-semibold">{tool.name}</h3>
+                          <code className="truncate text-[11px] text-muted-foreground">{tool.binary}</code>
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{tool.description}</p>
+                        <div className="mt-1.5 min-h-4">
+                          <ToolState status={status} job={job} />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 sm:justify-end">
+                        {active ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={job.status === "cancelling"}
+                            onClick={() => void ipc.cancelCliOperation(job.id).then(refreshCliJobs)}
+                          >
+                            <Square className="size-3.5" aria-hidden />
+                            Cancel
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={cliLoading || status?.installed}
+                            onClick={() => void installCliTool(tool)}
+                          >
+                            <Download className="size-3.5" aria-hidden />
+                            Install
+                          </Button>
                         )}
                       </div>
-                      <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
-                        {provider.models[0]?.name ?? "Custom endpoint"}
-                      </p>
-                    </button>
+                    </section>
                   );
                 })}
               </div>
 
-              {selectedProvider && (
-                <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <Label htmlFor="provider-key" className="text-sm font-medium">
-                      {selectedProvider.name} API key
-                    </Label>
-                    {PROVIDER_SETUP[selectedProvider.id] && (
-                      <button
-                        type="button"
-                        onClick={() => openExternal(PROVIDER_SETUP[selectedProvider.id].url)}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        {PROVIDER_SETUP[selectedProvider.id].label}
-                      </button>
-                    )}
-                  </div>
-                  <Input
-                    id="provider-key"
-                    type="password"
-                    placeholder={`Paste your ${selectedProvider.name} API key`}
-                    value={apiKeyInput}
-                    onChange={(event) => setApiKeyInput(event.target.value)}
-                    autoComplete="off"
-                  />
-                  {PROVIDER_SETUP[selectedProvider.id] && (
-                    <p className="text-xs text-muted-foreground">
-                      {PROVIDER_SETUP[selectedProvider.id].description}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      onClick={() => void handleConnect()}
-                      disabled={connecting || !apiKeyInput.trim()}
-                    >
-                      {connecting && <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden />}
-                      Connect
-                    </Button>
-                    {connectedProviderId === selectedProvider.id && (
-                      <span className="text-xs text-emerald-500">Connected</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <p className="text-xs text-muted-foreground">
-                You can skip this step and use the offline demo provider, then connect a real provider later in
-                Settings.
+              <p className="text-xs leading-5 text-muted-foreground">
+                You can skip this step and install CLI tools later from Settings → CLI Tools.
               </p>
             </div>
           )}
@@ -526,9 +521,7 @@ export function OnboardingWizard() {
               <div>
                 <h2 className="text-2xl font-semibold tracking-tight">You&apos;re all set</h2>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {connectedProviderId
-                    ? `${selectableProviders.find((p) => p.id === connectedProviderId)?.name ?? "Your provider"} is connected and your look is configured.`
-                    : "You can start chatting with the demo provider and connect a real one later."}
+                  Your workspace is ready. Install CLI tools anytime from Settings → CLI Tools.
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-muted/30 p-4 text-left text-xs text-muted-foreground">
@@ -536,10 +529,10 @@ export function OnboardingWizard() {
                 <ul className="mt-2 space-y-1">
                   <li>Language: {LANGUAGE_OPTIONS.find((l) => l.id === language)?.label}</li>
                   <li>
-                    Provider:{" "}
-                    {connectedProviderId
-                      ? selectableProviders.find((p) => p.id === connectedProviderId)?.name
-                      : "Demo (offline)"}
+                    CLI tools:{" "}
+                    {cliStatuses.filter((s) => s.installed).length > 0
+                      ? `${cliStatuses.filter((s) => s.installed).length} installed`
+                      : "None yet"}
                   </li>
                   <li>
                     Look: {THEME_OPTIONS.find((t) => t.id === theme)?.label} ·{" "}
