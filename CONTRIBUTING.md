@@ -21,9 +21,19 @@ Before opening a pull request, run the relevant checks:
 
 ```bash
 npm run build
+npm run test:memory
+npm run test:prompts
+npm run test:display
+npm run test:todo
+npm run test:cli
+npm run test:tools
 npm run test:errors
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
+
+## Notes for maintainers
+
+- `Analyse.md` and `PRODUCT.md` are local planning documents and are gitignored. Do not commit them.
 
 ## Pull requests
 
