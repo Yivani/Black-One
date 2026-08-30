@@ -1,29 +1,31 @@
 # Black One — application analysis
 
-Last reviewed: 2026-08-29
-Version: 1.0.1
+Last reviewed: 2026-08-30
+Version: 1.0.5
 
 ## Executive summary
 
 Black One is a local-first desktop AI chat client built with React 19, TypeScript, Vite, Tailwind CSS, Zustand, Tauri 2, Rust, SQLite, and a native PTY terminal. The frontend production build and Rust compile check both pass.
 
-Version 1.0.0 graduates the app from beta to a stable release. The UI surface is now complete: resizable panels, a robust system tray, expanded themes, capped chat titles, centered navigation, and a working in-app updater. The agent tool loop can read, write, delete, rename, list, and execute shell commands inside attached folders with explicit permission modes. The highest-impact trust gaps around tools, agent execution, and update delivery have been closed in this iteration.
+Version 1.0.4 replaces Ask with a persistent Todo workspace. Tasks are grouped by Critical, High, Mid, and Low priority, run from Critical to Low, support per-priority model selection, drag-and-drop reordering across priorities, live execution status, and optional multi-agent builder/reviewer work.
 
 ## Current product surface
 
 - Multi-provider streamed chat: OpenAI-compatible chat completions, OpenAI Responses, Anthropic Messages, custom/local endpoints, and an offline demo.
 - Local sessions, messages, folders, archive, pinning, branching, editing, regeneration, export, and a message queue.
 - File, folder, image, clipboard-image, and URL attachment UI with a configurable size cap for image previews.
-- Chat, Code, and Agent views, with a native multi-terminal implementation.
-- **Agent-style file and shell tools** that work with any provider via XML markers: read, write, create, delete, rename, list, and one-shot shell execution inside attached folders.
-- **Permission modes** for tool execution: Manual (approve everything), Auto (low-risk edits run freely; high-risk still asks), and YOLO (run without approval). Exposed as a composer dropdown with descriptions for each mode.
+- Agent, Code, and Todo views, with a native multi-terminal implementation.
+- **Agent-style file and shell tools** that work with any provider via XML markers: read, write, create, delete, rename, list, and one-shot shell execution inside attached folders. When no folder is attached, Code and Agent modes fall back to the process current working directory as the workspace.
+- **Permission modes** for tool execution: Manual (approve everything), Auto (read/list operations run automatically; changes and commands still ask), and YOLO (run without approval). Exposed as a composer dropdown with descriptions for each mode.
 - **Expanded theme presets** including Nord, Dracula, Solarized, Sakura, Amber, Forest, Ocean, Rose, Midnight, and others in addition to the original set.
 - **Resizable left and right panels** with min/max bounds and persisted widths.
 - **Chat title management**: sidebar titles are capped and truncated; the AI can auto-rename new chats to a short, useful title based on the first exchange.
 - **App title stability**: the window/app title remains "Black One" regardless of the selected chat name.
 - **System tray**: single-instance enforcement prevents duplicate tray icons; left click toggles visibility, double-click restores, right-click opens the context menu with Show/Hide/Quit.
-- **Centered top navigation**: Chat, Code, and Analytics tabs are centered in the title bar.
+- **Centered top navigation**: Agent, Code, and Todo tabs are centered in the title bar.
 - **Quick Chat**: standalone popup chat with proper scrolling and Escape-to-hide behavior.
+- **Onboarding wizard**: first-run setup for language, default provider, theme, accent color, and font size before the main window is shown.
+- **Memory viewer**: a resizable dialog that shows extracted memories by category, with refresh, copy-as-markdown, and delete-all actions.
 - **In-app updater**: checks GitHub Releases for `v1.0.0+` updates, downloads, installs, and prompts for restart.
 - Settings for models, providers, appearance, chat behavior (personalities, timezone, reasoning blocks, image attachments, preview limits), safety, memory, notifications, tools, archive, and advanced options.
 - Desktop packaging for Windows, macOS, and Linux through Tauri.
@@ -70,6 +72,32 @@ Approximate source size at review time:
 11. **Tray integration is robust.** Single-instance enforcement prevents duplicate tray icons, and left/right/double clicks are handled explicitly for toggle and menu behavior.
 12. **UI polish gaps are closed.** Resizable panels, centered top tabs, stable app title, capped chat titles, and expanded theme presets make the app feel finished.
 13. **Update delivery is automated.** The Tauri updater plugin checks GitHub Releases, verifies signatures, downloads, installs, and prompts for restart.
+14. **Code and Agent modes always have a workspace.** When no folder is attached, the tool system falls back to the process current working directory, so the model can inspect and edit files instead of asking the user to attach a folder.
+15. **Memory persistence is safe for SQLite.** Messages with the internal `memory` role are serialized as `system` rows with a metadata flag, satisfying the database role CHECK constraint while still rendering as memory entries in the UI.
+
+## 2026-08-30 agent and tool-runtime repair
+
+The poor transcript in the reported Kimi session was not primarily a model-quality problem. Four application-level issues amplified it:
+
+1. Tool results were stored as internal system messages but rendered by MessageBubble as ordinary assistant prose. This exposed raw tool-result protocol in the chat.
+2. Windows one-shot shell tools spawned cmd without CREATE_NO_WINDOW, allowing an external console window to appear even though stdout and stderr were already captured for the app.
+3. Manual/Auto selection was abbreviated to one letter and did not persist when changed in the composer. The old default was Manual, so even harmless reads and listings repeatedly asked for approval.
+4. The tool prompt encouraged a short summary after every result and did not explicitly stop the model from inventing scripts or dependencies when a requested run command was missing.
+
+The repair keeps one execution path and the existing safety boundary:
+
+- internal system messages remain in model context but are filtered out of the visible transcript;
+- tool calls and results are persisted as message metadata, so compact action rows show running, done, denied, and error states after reload;
+- the exact workspace roots are stored with each tool call, preventing manual approval from losing the original path sandbox;
+- Auto is the default for new installs and auto-runs only read_file and list_dir; changes and shell commands still require approval;
+- Manual/Auto changes from the composer persist, while YOLO remains temporary;
+- shell commands run as hidden captured child processes on Windows and non-zero exits render as errors;
+- malformed tool calls fail locally with a specific missing-argument error;
+- the agent prompt now prefers file tools for inspection, reserves shell use for actual command work, treats tool output as untrusted data, and reports missing run scripts instead of inventing project setup.
+
+Native provider function-calling was deliberately not enabled in this repair. It changes the structured payload sent to external providers and needs explicit product consent plus provider-specific integration tests. The current provider-agnostic XML protocol remains internal and is no longer exposed as user-facing chat.
+
+Focused checks cover protocol parsing, XML escaping, legacy result compatibility, and mode prompts. Frontend production build, Rust compile, and the changed UI detector pass.
 
 ## Priority findings
 
@@ -218,10 +246,12 @@ The 800×560 minimum window size makes this intentionally desktop-only. That is 
 | Check | Result |
 | --- | --- |
 | `npm run build` | Pass — TypeScript and Vite production build |
-| `cargo check` / `npm run tauri build` | Pass |
-| Automated frontend tests | Not available |
+| `npm run test:tools`, `test:prompts`, `test:memory`, `test:errors` | Pass - 13 focused tests |
+| `cargo check` | Pass |
+| Focused Rust shell test | Pass - captured output and exit code |
+| Changed-UI design detector | Pass - no findings |
 | Automated lint | Not available |
-| Full native runtime walkthrough | Not performed in this review |
+| Native development runtime | Pass - app launched and renderer stayed console-clean after hot reload; screenshot automation was unavailable in this environment |
 
 ## Overall assessment
 

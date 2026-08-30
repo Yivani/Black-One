@@ -123,7 +123,9 @@ export const useSessionStore = create<SessionState>()(
         pinned: false,
         folderId: opts?.folderId ?? null,
         messageCount: 0,
-        mode: opts?.mode ?? useUiStore.getState().viewMode,
+        mode:
+          opts?.mode ??
+          (useUiStore.getState().viewMode === "code" ? "code" : "agent"),
         systemPrompt: opts?.systemPrompt,
         modelId: opts?.modelId,
       };
@@ -136,14 +138,20 @@ export const useSessionStore = create<SessionState>()(
     },
 
     selectSession: (id) => {
+      const previousId = get().activeSessionId;
       set((state) => {
         state.activeSessionId = id;
       });
       const session = [...get().sessions, ...get().archivedSessions].find(
         (s) => s.id === id,
       );
-      if (session?.mode) {
-        useUiStore.getState().setViewMode(session.mode);
+      // Only switch the workspace view when the user is actually changing
+      // sessions. Re-selecting the same session (e.g. after a background
+      // reload on window focus) should not kick the user out of Todo view.
+      if (session?.mode && id !== previousId) {
+        useUiStore
+          .getState()
+          .setViewMode(session.mode === "code" ? "code" : "agent");
       }
     },
 

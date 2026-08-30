@@ -89,6 +89,7 @@ export interface AppInfo {
 export interface UpdateCheckResult {
   status: "up-to-date" | "available" | "error";
   latest?: string | null;
+  commitSha?: string | null;
   notes?: string | null;
 }
 
@@ -152,13 +153,22 @@ export function sessionFromRow(row: SessionRow): ChatSession {
 }
 
 export function messageToRow(message: Message): MessageRow {
-  const { mode, cost, reasoning, ...rest } = message;
+  const { mode, cost, reasoning, toolCalls, toolResults, toolWorkspace, role, ...rest } = message;
   const metadata: Record<string, unknown> = {};
   if (mode !== undefined) metadata.mode = mode;
   if (cost !== undefined) metadata.cost = cost;
   if (reasoning !== undefined) metadata.reasoning = reasoning;
+  if (toolCalls !== undefined) metadata.toolCalls = toolCalls;
+  if (toolResults !== undefined) metadata.toolResults = toolResults;
+  if (toolWorkspace !== undefined) metadata.toolWorkspace = toolWorkspace;
+  let rowRole = role;
+  if (role === "memory") {
+    rowRole = "system";
+    metadata.memoryMessage = true;
+  }
   return {
     ...rest,
+    role: rowRole,
     citations: message.citations ? JSON.stringify(message.citations) : null,
     attachments: message.attachments ? JSON.stringify(message.attachments) : null,
     metadata: Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null,
@@ -167,9 +177,10 @@ export function messageToRow(message: Message): MessageRow {
 
 export function messageFromRow(row: MessageRow): Message {
   const metadata = parseMetadata(row.metadata);
+  const role = metadata?.memoryMessage ? "memory" : (row.role as Message["role"]);
   return {
     ...row,
-    role: row.role as Message["role"],
+    role,
     status: row.status as Message["status"],
     tokensUsed: row.tokensUsed ?? undefined,
     modelId: row.modelId ?? undefined,
@@ -182,6 +193,15 @@ export function messageFromRow(row: MessageRow): Message {
     cost: typeof metadata?.cost === "number" ? metadata.cost : undefined,
     reasoning:
       typeof metadata?.reasoning === "string" ? metadata.reasoning : undefined,
+    toolCalls: Array.isArray(metadata?.toolCalls)
+      ? (metadata.toolCalls as Message["toolCalls"])
+      : undefined,
+    toolResults: Array.isArray(metadata?.toolResults)
+      ? (metadata.toolResults as Message["toolResults"])
+      : undefined,
+    toolWorkspace: Array.isArray(metadata?.toolWorkspace)
+      ? (metadata.toolWorkspace as string[])
+      : undefined,
   };
 }
 
@@ -237,6 +257,7 @@ export const ipc = {
   allowMediaPreview: (path: string) =>
     invokeTauri<string>("allow_media_preview", { path }),
   getDataDir: () => invokeTauri<string>("get_data_dir"),
+  getCwd: () => invokeTauri<string>("get_cwd"),
   pickSoundFile: () => invokeTauri<string | null>("pick_sound_file"),
 
   gitStatus: (path: string) => invokeTauri<GitStatus>("git_status", { path }),

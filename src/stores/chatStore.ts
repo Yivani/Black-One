@@ -17,26 +17,74 @@ import {
 } from "@/lib/utils";
 import { playErrorSound } from "@/hooks/useHaptics";
 import { extractAndStoreMemory, renderMemoryPrompt } from "@/lib/memory";
-import { buildModeSystemPrompt } from "@/lib/modePrompt";
+import {
+  buildModeSystemPrompt,
+  isIncompleteAgentResponse,
+} from "@/lib/modePrompt";
 import { reportAppError } from "@/lib/errors";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
+import { ipc, isTauri } from "@/lib/ipc";
 import {
   buildToolSystemPrompt,
   executeTool,
   extractAttachedFolders,
   parseToolCalls,
+  serializeToolResult,
   shouldAutoApprove,
   stripToolCalls,
   type ToolCall,
   type ToolContext,
-  type ToolResult,
 } from "@/lib/tools";
 
 let activeAbort: AbortController | null = null;
+const AGENT_EXECUTION_NUDGE =
+  "<agent_execution_required>The previous response only described future work or contained reasoning without performing it. Do not repeat the plan. Use the first required workspace tool now. If tools are unavailable, state the exact blocker.</agent_execution_required>";
+
+/** Cached cwd so we don't call the backend on every turn. */
+let cachedCwd: string | null = null;
+
+async function getDefaultWorkspace(): Promise<string | null> {
+  if (!isTauri) return null;
+  if (cachedCwd) return cachedCwd;
+  try {
+    cachedCwd = await ipc.getCwd();
+    return cachedCwd;
+  } catch {
+    return null;
+  }
+}
+
+function getModelForSession(modelId?: string) {
+  const modelStore = useModelStore.getState();
+  if (modelId) {
+    for (const provider of modelStore.providers) {
+      const model = provider.models.find(
+        (candidate) =>
+          candidate.selectionId === modelId || candidate.id === modelId,
+      );
+      if (model) return { provider, model };
+    }
+  }
+  return modelStore.getSelectedModel();
+}
+
+async function resolveAttachedFolders(
+  sessionId: string,
+  attachments: Attachment[] = [],
+  allowDefaultWorkspace = false,
+): Promise<string[]> {
+  const explicit = extractAttachedFolders(attachments).concat(
+    collectAttachedFolderPaths(sessionId),
+  );
+  if (explicit.length > 0) return explicit;
+  if (!allowDefaultWorkspace) return [];
+  const cwd = await getDefaultWorkspace();
+  return cwd ? [cwd] : [];
+}
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let memoryExtractionQueue = Promise.resolve();
 
@@ -103,6 +151,7 @@ export interface ChatState {
     content: string,
     attachments?: Attachment[],
     onPersisted?: (sessionId: string) => void,
+    targetSessionId?: string,
   ) => Promise<void>;
   continueAssistantTurn: (sessionId: string) => Promise<void>;
   runToolLoop: (sessionId: string) => Promise<void>;
@@ -191,6 +240,7 @@ export const useChatStore = create<ChatState>()(
       content,
       attachments = [],
       onPersisted?: (sessionId: string) => void,
+      targetSessionId?: string,
     ) => {
       const trimmed = content.trim();
       if (!trimmed && attachments.length === 0) return;
@@ -201,10 +251,12 @@ export const useChatStore = create<ChatState>()(
       }
 
       const sessionStore = useSessionStore.getState();
-      const sessionId = await sessionStore.ensureActiveSession();
+      const sessionId =
+        targetSessionId ?? (await sessionStore.ensureActiveSession());
       const settings = useSettingsStore.getState().settings;
-      const selected = useModelStore.getState().getSelectedModel();
-      const mode = useUiStore.getState().viewMode;
+      const session = sessionStore.sessions.find((s) => s.id === sessionId);
+      const selected = getModelForSession(session?.modelId);
+      const mode = session?.mode ?? "agent";
 
       if (!selected) {
         toast.error(
@@ -249,7 +301,6 @@ export const useChatStore = create<ChatState>()(
       await persistence.addMessage(assistantMessage);
       onPersisted?.(sessionId);
 
-      const session = sessionStore.sessions.find((s) => s.id === sessionId);
       const isFirstExchange = session && session.messageCount === 0;
       if (isFirstExchange) {
         sessionStore.touchSession(sessionId, {
@@ -289,8 +340,10 @@ export const useChatStore = create<ChatState>()(
           .getState()
           .getApiKey(selected.provider.id);
         const contextMessages = buildContextMessages(sessionId, history);
-        const attachedFolders = extractAttachedFolders(attachments).concat(
-          collectAttachedFolderPaths(sessionId),
+        const attachedFolders = await resolveAttachedFolders(
+          sessionId,
+          attachments,
+          mode !== "chat",
         );
         const basePrompt =
           session?.systemPrompt ?? settings.chat.defaultSystemPrompt ?? "";
@@ -442,7 +495,7 @@ export const useChatStore = create<ChatState>()(
             .catch((error) => console.error("Memory extraction failed", error));
         }
 
-        void get().runToolLoop(sessionId);
+        await get().runToolLoop(sessionId);
       } catch (error) {
         if (flushTimer) {
           clearTimeout(flushTimer);
@@ -490,12 +543,12 @@ export const useChatStore = create<ChatState>()(
       if (get().streamingSessionId) return;
       const sessionStore = useSessionStore.getState();
       const settings = useSettingsStore.getState().settings;
-      const selected = useModelStore.getState().getSelectedModel();
+      const session = sessionStore.sessions.find((s) => s.id === sessionId);
+      const selected = getModelForSession(session?.modelId);
       if (!selected) return;
 
-      const session = sessionStore.sessions.find((s) => s.id === sessionId);
       const messages = get().messagesBySession[sessionId] ?? [];
-      const mode = session?.mode ?? useUiStore.getState().viewMode;
+      const mode = session?.mode ?? "agent";
       const now = Date.now();
       const assistantMessage: Message = {
         id: generateId(),
@@ -544,7 +597,11 @@ export const useChatStore = create<ChatState>()(
           .getState()
           .getApiKey(selected.provider.id);
         const contextMessages = buildContextMessages(sessionId, messages);
-        const attachedFolders = collectAttachedFolderPaths(sessionId);
+        const attachedFolders = await resolveAttachedFolders(
+          sessionId,
+          [],
+          mode !== "chat",
+        );
         const basePrompt =
           session?.systemPrompt ?? settings.chat.defaultSystemPrompt ?? "";
         const memoryPrompt = settings.memory.memoryPersistence
@@ -621,7 +678,7 @@ export const useChatStore = create<ChatState>()(
           state.isThinking = false;
         });
         await persistence.updateMessage(finalMessage);
-        void get().runToolLoop(sessionId);
+        await get().runToolLoop(sessionId);
       } catch (error) {
         if (flushTimer) {
           clearTimeout(flushTimer);
@@ -669,13 +726,52 @@ export const useChatStore = create<ChatState>()(
 
       const calls = parseToolCalls(lastAssistant.content, lastAssistant.id);
       if (calls.length === 0) {
+        const lastUser = [...messages]
+          .reverse()
+          .find((message) => message.role === "user");
+        const alreadyNudged = messages.some(
+          (message) =>
+            message.role === "system" &&
+            message.content === AGENT_EXECUTION_NUDGE &&
+            message.createdAt >= (lastUser?.createdAt ?? 0),
+        );
+        if (
+          lastAssistant.mode !== "chat" &&
+          !alreadyNudged &&
+          isIncompleteAgentResponse(
+            lastAssistant.content,
+            lastAssistant.reasoning,
+          )
+        ) {
+          const nudge: Message = {
+            id: generateId(),
+            sessionId,
+            role: "system",
+            content: AGENT_EXECUTION_NUDGE,
+            createdAt: Date.now(),
+            status: "complete",
+            mode: lastAssistant.mode,
+          };
+          await persistence.addMessage(nudge);
+          set((state) => {
+            const list = state.messagesBySession[sessionId];
+            if (list) list.push(nudge);
+            state.toolLoopDepth[sessionId] = currentDepth + 1;
+          });
+          await get().continueAssistantTurn(sessionId);
+          return;
+        }
         set((state) => {
           delete state.toolLoopDepth[sessionId];
         });
         return;
       }
 
-      const attachedFolders = collectAttachedFolderPaths(sessionId);
+      const attachedFolders = await resolveAttachedFolders(
+        sessionId,
+        [],
+        lastAssistant.mode !== "chat",
+      );
       const permissionMode = useToolRuntimeStore.getState().permissionMode;
       const toAutoApprove: ToolCall[] = [];
       const pending: ToolCall[] = [];
@@ -689,6 +785,22 @@ export const useChatStore = create<ChatState>()(
       }
 
       useToolRuntimeStore.getState().queuePending(pending);
+      const visibleCalls = calls.map((call) =>
+        toAutoApprove.some((approved) => approved.id === call.id)
+          ? { ...call, status: "running" as const }
+          : call,
+      );
+      const updatedAssistant = {
+        ...lastAssistant,
+        toolCalls: visibleCalls,
+        toolWorkspace: attachedFolders,
+      };
+      set((state) => {
+        const list = state.messagesBySession[sessionId];
+        const index = list?.findIndex((message) => message.id === lastAssistant.id) ?? -1;
+        if (list && index >= 0) list[index] = updatedAssistant;
+      });
+      await persistence.updateMessage(updatedAssistant);
 
       const context: ToolContext = { attachedFolders };
       const executed = await Promise.all(
@@ -702,10 +814,7 @@ export const useChatStore = create<ChatState>()(
     submitToolResults: async (sessionId, results, shouldContinue = true) => {
       if (results.length === 0) return;
       const resultContent = results
-        .map((r) => {
-          const result = r.result as ToolResult | undefined;
-          return `<tool_result name="${r.name}" id="${r.id}" status="${r.status}">${result?.success ? "success" : "error"}: ${result?.output ?? result?.error ?? ""}</tool_result>`;
-        })
+        .map(serializeToolResult)
         .join("\n");
 
       const resultMessage: Message = {
@@ -715,6 +824,7 @@ export const useChatStore = create<ChatState>()(
         content: resultContent,
         createdAt: Date.now(),
         status: "complete",
+        toolResults: results,
       };
       await persistence.addMessage(resultMessage);
       set((state) => {

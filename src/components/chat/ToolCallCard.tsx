@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, FileEdit, Folder, Loader2, ShieldAlert, Terminal, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { executeTool, type ToolCall, type ToolContext } from "@/lib/tools";
+import { cloneToolCall, executeTool, type ToolCall, type ToolContext } from "@/lib/tools";
 import { useChatStore } from "@/stores/chatStore";
 import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
 
@@ -25,6 +25,17 @@ const TOOL_ICONS: Record<string, React.ReactNode> = {
   shell_command: <Terminal className="size-3.5" aria-hidden />,
 };
 
+const TOOL_LABELS: Record<string, string> = {
+  read_file: "Read file",
+  write_file: "Write file",
+  create_dir: "Create folder",
+  delete_file: "Delete file",
+  delete_dir: "Delete folder",
+  rename_file: "Move file",
+  list_dir: "List folder",
+  shell_command: "Run command",
+};
+
 function formatArgs(call: ToolCall): string {
   switch (call.name) {
     case "read_file":
@@ -44,7 +55,8 @@ function formatArgs(call: ToolCall): string {
 }
 
 export function ToolCallCard({ call, context, sessionId, showApprove = false }: ToolCallCardProps) {
-  const [localCall, setLocalCall] = useState<ToolCall>(call);
+  // Deep-clone the prop so we don't hold onto any Immer proxies that can be revoked after state updates.
+  const [localCall, setLocalCall] = useState<ToolCall>(() => cloneToolCall(call));
   const approve = useToolRuntimeStore((s) => s.approve);
   const deny = useToolRuntimeStore((s) => s.deny);
   const submitToolResults = useChatStore((s) => s.submitToolResults);
@@ -54,6 +66,10 @@ export function ToolCallCard({ call, context, sessionId, showApprove = false }: 
   const isDone = localCall.status === "done";
   const isDenied = localCall.status === "denied";
   const isError = localCall.status === "error";
+
+  useEffect(() => {
+    setLocalCall(cloneToolCall(call));
+  }, [call]);
 
   const handleApprove = async () => {
     const approved = approve(localCall.id);
@@ -76,18 +92,15 @@ export function ToolCallCard({ call, context, sessionId, showApprove = false }: 
   return (
     <div
       className={cn(
-        "my-2 overflow-hidden rounded-lg border text-xs",
-        isDone && "border-green-500/30 bg-green-500/5",
-        isError && "border-red-500/30 bg-red-500/5",
-        isDenied && "border-amber-500/30 bg-amber-500/5",
-        isPending && "border-primary/30 bg-primary/5",
-        isRunning && "border-primary/50 bg-primary/10",
+        "my-2 overflow-hidden rounded-md border border-border/70 bg-muted/20 text-xs",
+        isError && "border-destructive/35",
+        isDenied && "border-amber-500/35",
       )}
     >
-      <div className="flex items-center justify-between gap-2 px-3 py-2">
+      <div className="flex min-h-9 items-center justify-between gap-3 px-2.5 py-1.5">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-muted-foreground">{TOOL_ICONS[localCall.name] ?? null}</span>
-          <span className="font-medium capitalize">{localCall.name.replace(/_/g, " ")}</span>
+          <span className="shrink-0 font-medium">{TOOL_LABELS[localCall.name] ?? localCall.name}</span>
           <span className="truncate text-muted-foreground">{formatArgs(localCall)}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -99,21 +112,19 @@ export function ToolCallCard({ call, context, sessionId, showApprove = false }: 
             <>
               <Button
                 variant="ghost"
-                size="icon"
-                className="size-6 hover:bg-green-500/10 hover:text-green-500"
-                onClick={handleApprove}
-                aria-label="Approve"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={handleDeny}
               >
-                <Check className="size-3.5" aria-hidden />
+                Deny
               </Button>
               <Button
-                variant="ghost"
-                size="icon"
-                className="size-6 hover:bg-red-500/10 hover:text-red-500"
-                onClick={handleDeny}
-                aria-label="Deny"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={handleApprove}
               >
-                <X className="size-3.5" aria-hidden />
+                Allow
               </Button>
             </>
           )}
@@ -127,7 +138,7 @@ export function ToolCallCard({ call, context, sessionId, showApprove = false }: 
               type="button"
               className="w-full border-t border-border/50 bg-muted/20 px-3 py-1.5 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
             >
-              {localCall.result.error ? "Error" : "Result"}
+              {localCall.result.error ? "Show error" : "Show output"}
             </button>
           </CollapsibleTrigger>
           <CollapsibleContent>

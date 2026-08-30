@@ -2,7 +2,6 @@ import { lazy, Suspense } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useUiStore } from "@/stores/uiStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { ChatArea } from "@/components/layout/ChatArea";
 import { LayoutEditor } from "@/components/layout/LayoutEditor";
 import { RightPanel } from "@/components/layout/RightPanel";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -16,6 +15,11 @@ const AgentView = lazy(() =>
 const CodeView = lazy(() =>
   import("@/components/views/CodeView").then((module) => ({
     default: module.CodeView,
+  })),
+);
+const TodoView = lazy(() =>
+  import("@/components/views/TodoView").then((module) => ({
+    default: module.TodoView,
   })),
 );
 
@@ -43,9 +47,12 @@ function MainContent() {
           <CodeView key="code-view" />
         </Suspense>
       );
-    case "chat":
-    default:
-      return <ChatArea key="chat-area" />;
+    case "todo":
+      return (
+        <Suspense fallback={<ViewFallback />}>
+          <TodoView key="todo-view" />
+        </Suspense>
+      );
   }
 }
 

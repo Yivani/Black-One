@@ -11,6 +11,7 @@ import {
 } from "@/lib/constants";
 
 export type RightPanelTab = "sources" | "files" | "preview" | "agent";
+export type ViewMode = "agent" | "code" | "todo";
 
 export type LayoutId = "default" | "focus" | "terminal" | "quad" | string;
 
@@ -69,7 +70,6 @@ export type SettingsCategory =
   | "safety"
   | "memory"
   | "advanced"
-  | "notifications"
   | "haptics"
   | "providers"
   | "shortcuts"
@@ -104,7 +104,7 @@ interface UiState {
   /** User-saved custom arrangements. */
   savedLayouts: SavedLayout[];
   /** Current top-level view mode. */
-  viewMode: "chat" | "code" | "agent";
+  viewMode: ViewMode;
   /** Currently selected agent preset in the Agent workspace. */
   selectedAgentPresetId: string | null;
   /** Whether the inline layout editor is active. */
@@ -125,7 +125,7 @@ interface UiState {
   applyLayout: (id: LayoutId) => void;
   saveCurrentLayout: (name: string, patch?: Partial<SavedLayout>) => void;
   deleteSavedLayout: (id: LayoutId) => void;
-  setViewMode: (mode: "chat" | "code" | "agent") => void;
+  setViewMode: (mode: ViewMode) => void;
   setSelectedAgentPresetId: (id: string | null) => void;
   openSettings: (category?: SettingsCategory) => void;
   closeSettings: () => void;
@@ -194,7 +194,7 @@ export const useUiStore = create<UiState>()(
     previewMessageId: null,
     layout: initialLayoutId,
     savedLayouts: initialSavedLayouts,
-    viewMode: "chat",
+    viewMode: "agent",
     selectedAgentPresetId: null,
     layoutEditing: false,
     titleBarLayout: readInitial(

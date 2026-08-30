@@ -24,7 +24,15 @@ pub struct AppInfo {
 pub struct UpdateCheckResult {
     pub status: String,
     pub latest: Option<String>,
+    pub commit_sha: Option<String>,
     pub notes: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_cwd() -> Result<String, AppError> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
 }
 
 #[tauri::command]
@@ -77,6 +85,7 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, AppError> {
             return Ok(UpdateCheckResult {
                 status: "up-to-date".to_string(),
                 latest: None,
+                commit_sha: None,
                 notes: Some("No published releases yet.".to_string()),
             });
         }
@@ -84,6 +93,7 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, AppError> {
             return Ok(UpdateCheckResult {
                 status: "error".to_string(),
                 latest: None,
+                commit_sha: None,
                 notes: Some(e.to_string()),
             });
         }
@@ -94,6 +104,7 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, AppError> {
         return Ok(UpdateCheckResult {
             status: "up-to-date".to_string(),
             latest: None,
+            commit_sha: None,
             notes: Some("No published releases yet.".to_string()),
         });
     }
@@ -101,6 +112,7 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, AppError> {
         return Ok(UpdateCheckResult {
             status: "error".to_string(),
             latest: None,
+            commit_sha: None,
             notes: Some(format!("GitHub API returned status {status_code}.")),
         });
     }
@@ -113,6 +125,10 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, AppError> {
         .map_err(|e| AppError::Http(format!("invalid release payload: {e}")))?;
 
     let tag = json.get("tag_name").and_then(|v| v.as_str());
+    let commit_sha = json
+        .get("target_commitish")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let notes = json
         .get("body")
         .and_then(|v| v.as_str())
@@ -123,12 +139,14 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, AppError> {
             Ok(UpdateCheckResult {
                 status: "available".to_string(),
                 latest: Some(tag.to_string()),
+                commit_sha,
                 notes,
             })
         }
         _ => Ok(UpdateCheckResult {
             status: "up-to-date".to_string(),
             latest: tag.map(str::to_string),
+            commit_sha,
             notes,
         }),
     }

@@ -129,7 +129,7 @@ export function useAgentFinishSound(): void {
       if (!wasStreaming || nowStreaming) return;
 
       const { viewMode } = useUiStore.getState();
-      if (viewMode !== "chat" && viewMode !== "code") return;
+      if (viewMode === "todo") return;
 
       playFinishSound();
     });

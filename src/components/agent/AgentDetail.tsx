@@ -18,6 +18,9 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
 import { useUiStore } from "@/stores/uiStore";
 import { findAgentPreset } from "@/lib/agentPresets";
+import type { Message } from "@/types/chat";
+
+const EMPTY_MESSAGES: Message[] = [];
 
 function StatusRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -37,7 +40,9 @@ export function AgentDetail() {
   const queueLength = useChatStore((s) => s.queue.length);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const messages = useChatStore((s) =>
-    activeSessionId ? (s.messagesBySession[activeSessionId] ?? []) : [],
+    activeSessionId
+      ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES)
+      : EMPTY_MESSAGES,
   );
 
   const attachedFolder = useMemo(() => {

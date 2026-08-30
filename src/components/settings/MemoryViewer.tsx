@@ -217,7 +217,7 @@ export function MemoryViewer() {
               No memories in this category yet.
             </div>
           ) : (
-            <div className="mx-auto max-w-4xl space-y-5">
+            <div className="mx-auto max-w-6xl space-y-5">
               <div className="inline-flex items-center gap-2 rounded-sm border bg-background px-3 py-2">
                 <Brain className="size-4" aria-hidden />
                 <span className="text-sm font-semibold">You</span>

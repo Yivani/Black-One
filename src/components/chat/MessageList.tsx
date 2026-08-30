@@ -135,18 +135,14 @@ export function MessageList() {
         <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center px-8 pb-[8vh]">
           <Logo size={28} className="mb-7 text-foreground/90" />
           <h1 className="max-w-lg text-3xl font-semibold tracking-[-0.03em] text-foreground">
-            {viewMode === "chat"
-              ? "What do you want to know?"
-              : viewMode === "agent"
-                ? "What should Agent finish?"
-                : "What should we work on?"}
+            {viewMode === "agent"
+              ? "What should Agent finish?"
+              : "What should we work on?"}
           </h1>
           <p className="mt-3 max-w-lg text-sm leading-6 text-muted-foreground">
-            {viewMode === "chat"
-              ? "Ask for an explanation, analysis, plan, or writing help."
-              : viewMode === "agent"
-                ? "Attach the project and describe the outcome. Agent will inspect, act, and verify."
-                : "Attach the project and describe the change while you work beside the terminal."}
+            {viewMode === "agent"
+              ? "Attach the project and describe the outcome. Agent will inspect, act, and verify."
+              : "Attach the project and describe the change while you work beside the terminal."}
           </p>
         </div>
       </div>

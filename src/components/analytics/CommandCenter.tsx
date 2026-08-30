@@ -1,5 +1,5 @@
 import { useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
-import { Activity, AlertTriangle, BarChart3, Bot, CircleDollarSign, Clock3, MessageSquareText, RefreshCw, User } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, Bot, Brain, CircleDollarSign, Clock3, MessageSquareText, RefreshCw, Rocket, User } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -11,6 +11,8 @@ import type { Message } from "@/types/chat";
 import { cn, formatContextWindow, formatCurrency, formatTimestamp } from "@/lib/utils";
 import { getErrors, subscribeErrors } from "@/lib/errors";
 import { ErrorLog } from "./ErrorLog";
+import { MemoryViewer } from "@/components/settings/MemoryViewer";
+import { Changelog } from "./Changelog";
 
 const EMPTY_MESSAGES: Message[] = [];
 const FILTERS: { value: UsageModeFilter; label: string }[] = [
@@ -121,7 +123,7 @@ export function CommandCenter() {
   );
   const { selected } = useModels();
   const errors = useSyncExternalStore(subscribeErrors, getErrors, getErrors);
-  const [tab, setTab] = useState<"overview" | "errors">("overview");
+  const [tab, setTab] = useState<"overview" | "memory" | "updates" | "errors">("overview");
   const [filter, setFilter] = useState<UsageModeFilter>("all");
   const { stats, isLoading, refresh } = useUsageStats(filter);
 
@@ -172,13 +174,22 @@ export function CommandCenter() {
         <button type="button" onClick={() => setTab("overview")} className={cn("h-10 border-b-2 px-0.5 text-xs font-medium transition-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", tab === "overview" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
           Overview
         </button>
+        <button type="button" onClick={() => setTab("memory")} className={cn("flex h-10 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", tab === "memory" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
+          <Brain className="size-3.5" aria-hidden />
+          Memory
+        </button>
+        <button type="button" onClick={() => setTab("updates")} className={cn("flex h-10 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", tab === "updates" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
+          <Rocket className="size-3.5" aria-hidden />
+          Updates
+        </button>
         <button type="button" onClick={() => setTab("errors")} className={cn("flex h-10 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", tab === "errors" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
           Errors
           {errors.length > 0 && <Badge variant="destructive" className="h-4 min-w-4 rounded-sm px-1 font-mono text-[9px]">{errors.length}</Badge>}
         </button>
       </nav>
 
-      {tab === "errors" ? <ErrorLog /> : <ScrollArea className="min-h-0 flex-1">
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {tab === "overview" && <ScrollArea className="h-full">
         <div className="p-5 sm:p-6">
           <section aria-label="Usage summary" className="grid grid-cols-2 border-b border-border/70 pb-4 sm:grid-cols-4">
             <Stat icon={Clock3} label="Sessions" detail="Saved conversations" value={isLoading ? "—" : formatContextWindow(stats.sessions)} />
@@ -246,6 +257,10 @@ export function CommandCenter() {
           <p className="mt-4 text-[10px] leading-4 text-muted-foreground">Cost figures use built-in model pricing and may differ from your provider invoice.</p>
         </div>
       </ScrollArea>}
+        {tab === "memory" && <MemoryViewer />}
+        {tab === "updates" && <Changelog />}
+        {tab === "errors" && <ErrorLog />}
+      </div>
     </div>
   );
 }

@@ -42,6 +42,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { CommandCenterButton } from "@/components/analytics/CommandCenterButton";
+import { UpdateButton } from "@/components/analytics/UpdateButton";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import {
   ContextMenu,
@@ -887,6 +888,7 @@ function CollapsedRail() {
         <MessageSquare className="size-4" aria-hidden />
       </TipButton>
       <div className="flex-1" />
+      <UpdateButton collapsed />
       <CommandCenterButton collapsed />
     </div>
   );
@@ -1016,7 +1018,8 @@ function ExpandedSidebar() {
           </div>
         )}
       </ScrollArea>
-      <div className="px-2 pb-2 pt-1">
+      <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
+        <UpdateButton />
         <CommandCenterButton />
       </div>
       <ConfirmDialog

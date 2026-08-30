@@ -80,6 +80,13 @@ export const useSettingsStore = create<SettingsState>()(
         }
 
         const merged = mergeWithDefaults(stored);
+
+        // Existing installs (any stored settings at all) should not be forced
+        // through the first-run onboarding wizard.
+        if (Object.keys(stored).length > 0) {
+          merged.onboardingCompleted = true;
+        }
+
         set((state) => {
           state.settings = merged;
           state.isLoaded = true;

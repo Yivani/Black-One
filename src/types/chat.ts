@@ -1,3 +1,5 @@
+import type { ToolCall } from "../lib/toolProtocol.ts";
+
 export type MessageRole = "user" | "assistant" | "system" | "memory";
 
 export type MessageStatus = "complete" | "streaming" | "error" | "stopped";
@@ -51,6 +53,10 @@ export interface Message {
   cost?: number;
   /** Optional reasoning / thinking content returned by the provider. */
   reasoning?: string;
+  /** Structured tool calls/results are persisted separately from user-facing prose. */
+  toolCalls?: ToolCall[];
+  toolResults?: ToolCall[];
+  toolWorkspace?: string[];
 }
 
 export interface QueuedMessage {

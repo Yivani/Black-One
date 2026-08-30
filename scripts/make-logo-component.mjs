@@ -21,6 +21,10 @@ body = body.replace(/<metadata>[\s\S]*?<\/metadata>/gi, "");
 body = body.replace(/fill="rgb\(10,10,15\)"/g, 'fill="currentColor"');
 // JSX uses className instead of class.
 body = body.replace(/\bclass=/g, "className=");
+body = body
+  .replace(/\bstop-opacity=/g, "stopOpacity=")
+  .replace(/\bstop-color=/g, "stopColor=")
+  .replace(/\bfill-opacity=/g, "fillOpacity=");
 
 const component = `import { cn } from "@/lib/utils";
 

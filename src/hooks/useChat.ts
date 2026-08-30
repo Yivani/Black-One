@@ -24,7 +24,12 @@ export function useChat(): UseChatResult {
   const loadMessages = useChatStore((s) => s.loadMessages);
 
   const messages = useMemo(
-    () => (activeSessionId ? (messagesBySession[activeSessionId] ?? []) : []),
+    () =>
+      activeSessionId
+        ? (messagesBySession[activeSessionId] ?? []).filter(
+            (message) => message.role !== "system",
+          )
+        : [],
     [activeSessionId, messagesBySession],
   );
   const contextMessageCount = useMemo(

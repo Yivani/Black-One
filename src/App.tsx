@@ -18,6 +18,8 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useUpdateStore } from "@/stores/updateStore";
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 
 let bootStarted = false;
 
@@ -169,7 +171,7 @@ export function App() {
     let unlisten: (() => void) | undefined;
     void listen<QuickChatPayload>("quick-chat-submit", ({ payload }) => {
       void (async () => {
-        useUiStore.getState().setViewMode("chat");
+        useUiStore.getState().setViewMode("agent");
         useModelStore.getState().selectModel(payload.modelId);
         await useSessionStore.getState().createSession({ title: "New chat" });
         void useChatStore
@@ -242,7 +244,26 @@ export function App() {
     };
   }, [ready]);
 
+  useEffect(() => {
+    if (!isTauri || !ready) return;
+    const check = () => void useUpdateStore.getState().checkNow();
+    check();
+    const interval = setInterval(check, 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [ready]);
+
+  const onboardingCompleted = useSettingsStore((s) => s.settings.onboardingCompleted);
+
   if (!ready) return <BootScreen />;
+
+  if (!onboardingCompleted) {
+    return (
+      <>
+        <OnboardingWizard />
+        <Toaster position="bottom-right" closeButton theme={dark ? "dark" : "light"} />
+      </>
+    );
+  }
 
   return (
     <>

@@ -177,4 +177,6 @@ export interface AppSettings {
   archive: ArchiveSettings;
   /** action id -> binding string like "Mod+Shift+K" */
   shortcuts: Record<string, string>;
+  /** Whether the first-run onboarding wizard has been completed. */
+  onboardingCompleted: boolean;
 }

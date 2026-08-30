@@ -1,4 +1,6 @@
 use std::io::Read;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -10,6 +12,8 @@ use crate::utils::AppError;
 
 const SHELL_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_OUTPUT_BYTES: usize = 256 * 1024; // 256 KiB
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,8 +37,7 @@ fn is_path_inside(root: &str, target: &str) -> bool {
         let Ok(canonical_parent) = std::fs::canonicalize(parent) else {
             return false;
         };
-        return canonical_parent == canonical_root
-            || canonical_parent.starts_with(&canonical_root);
+        return canonical_parent == canonical_root || canonical_parent.starts_with(&canonical_root);
     };
     canonical_target == canonical_root || canonical_target.starts_with(&canonical_root)
 }
@@ -58,24 +61,36 @@ pub fn execute_shell_command(
     }
 
     // Basic shell invocation using the OS default shell.
-    let shell = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
-    let flag = if cfg!(target_os = "windows") { "/C" } else { "-c" };
+    let shell = if cfg!(target_os = "windows") {
+        "cmd"
+    } else {
+        "sh"
+    };
+    let flag = if cfg!(target_os = "windows") {
+        "/C"
+    } else {
+        "-c"
+    };
 
-    let mut child = Command::new(shell)
+    let mut process = Command::new(shell);
+    process
         .arg(flag)
         .arg(&command)
         .current_dir(&cwd)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(AppError::Io)?;
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    process.creation_flags(CREATE_NO_WINDOW);
+    let mut child = process.spawn().map_err(AppError::Io)?;
 
-    let stdout_pipe = child.stdout.take().ok_or_else(|| {
-        AppError::InvalidInput("failed to capture stdout".to_string())
-    })?;
-    let stderr_pipe = child.stderr.take().ok_or_else(|| {
-        AppError::InvalidInput("failed to capture stderr".to_string())
-    })?;
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::InvalidInput("failed to capture stdout".to_string()))?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::InvalidInput("failed to capture stderr".to_string()))?;
 
     let (stdout_tx, stdout_rx) = mpsc::channel::<String>();
     let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
@@ -128,5 +143,31 @@ fn read_limited(mut pipe: impl Read) -> String {
         text
     } else {
         String::from_utf8_lossy(&buffer).to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::execute_shell_command;
+
+    #[test]
+    fn captures_output_and_exit_code() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let output =
+            execute_shell_command("echo black-one-shell-check".into(), Some(cwd.clone()), None)
+                .unwrap();
+        assert_eq!(output.exit_code, Some(0));
+        assert!(output.stdout.contains("black-one-shell-check"));
+
+        let failure = if cfg!(target_os = "windows") {
+            "exit /b 7"
+        } else {
+            "exit 7"
+        };
+        let output = execute_shell_command(failure.into(), Some(cwd), None).unwrap();
+        assert_eq!(output.exit_code, Some(7));
     }
 }

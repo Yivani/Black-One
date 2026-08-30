@@ -11,7 +11,7 @@ import type { ToolConfig, ToolPermission } from "@/types/settings";
 
 const PERMISSION_OPTIONS: Array<{ id: ToolPermission; title: string; description: string }> = [
   { id: "ask", title: "Manual", description: "Every file/shell action needs approval." },
-  { id: "allowlisted", title: "Auto", description: "Low-risk edits run automatically; deletes, renames, and shell still ask." },
+  { id: "allowlisted", title: "Auto", description: "Read-only inspection runs automatically; changes and commands still ask." },
   { id: "blocked", title: "Blocked", description: "Disable file and shell tools." },
 ];
 
@@ -43,8 +43,8 @@ export function ToolSettings() {
       <section className="space-y-2">
         <p className="text-sm font-medium leading-none">Tool execution permission</p>
         <p className="text-xs text-muted-foreground">
-          This sets the default for new chats. You can override it per chat with the{" "}
-          <strong>Manual / Auto / YOLO</strong> toggle in the composer.
+          This controls when Black One asks before using workspace tools. The composer
+          offers Manual, Auto, and a temporary YOLO mode.
         </p>
         <div
           role="radiogroup"

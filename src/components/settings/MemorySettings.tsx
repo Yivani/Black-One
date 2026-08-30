@@ -263,7 +263,7 @@ export function MemorySettings() {
       </Dialog>
 
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
-        <DialogContent className="h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-none overflow-hidden p-5 flex flex-col">
+        <DialogContent className="h-[min(900px,calc(100vh-32px))] w-[min(1280px,calc(100vw-32px))] max-w-none overflow-hidden p-5 flex flex-col rounded-xl sm:max-w-none">
           <DialogHeader>
             <DialogTitle>Memory viewer</DialogTitle>
             <DialogDescription>

@@ -556,7 +556,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     errorSound: "default",
   },
   tools: {
-    permission: "ask",
+    permission: "allowlisted",
     fileToolsEnabled: true,
     shellToolsEnabled: true,
     tools: [],
@@ -565,4 +565,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoArchiveDays: 0,
   },
   shortcuts: defaultShortcutMap(),
+  onboardingCompleted: false,
 };

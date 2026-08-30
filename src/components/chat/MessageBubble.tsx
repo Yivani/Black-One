@@ -34,7 +34,14 @@ import { useModelStore } from "@/stores/modelStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useUiStore } from "@/stores/uiStore";
 import { cn, formatTimestamp } from "@/lib/utils";
-import { parseToolCalls, stripToolCalls, type ToolContext } from "@/lib/tools";
+import {
+  parseToolCalls,
+  parseToolResults,
+  stripToolCalls,
+  type ToolContext,
+} from "@/lib/tools";
+
+const EMPTY_MESSAGES: Message[] = [];
 
 interface MessageBubbleProps {
   message: Message;
@@ -136,7 +143,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   const [reasoningOpen, setReasoningOpen] = useState(false);
 
   const sessionMessages = useChatStore(
-    (s) => s.messagesBySession[message.sessionId] ?? [],
+    (s) => s.messagesBySession[message.sessionId] ?? EMPTY_MESSAGES,
   );
   const attachedFolders = useMemo(() => {
     const seen = new Set<string>();
@@ -151,11 +158,25 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
     }
     return folders;
   }, [sessionMessages]);
-  const toolContext: ToolContext = { attachedFolders };
+  const toolContext: ToolContext = {
+    attachedFolders:
+      message.toolWorkspace?.length ? message.toolWorkspace : attachedFolders,
+  };
   const toolCalls = useMemo(
-    () => parseToolCalls(message.content, message.id),
-    [message.content, message.id],
+    () => message.toolCalls ?? parseToolCalls(message.content, message.id),
+    [message.content, message.id, message.toolCalls],
   );
+  const visibleToolCalls = useMemo(() => {
+    const results = new Map(
+      sessionMessages
+        .flatMap((entry) =>
+          entry.toolResults ??
+          (entry.role === "system" ? parseToolResults(entry.content) : []),
+        )
+        .map((call) => [call.id, call]),
+    );
+    return toolCalls.map((call) => results.get(call.id) ?? call);
+  }, [sessionMessages, toolCalls]);
   const displayContent = useMemo(
     () => stripToolCalls(message.content),
     [message.content],
@@ -355,8 +376,8 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
                   </Collapsible>
                 )}
                 <MarkdownRenderer content={displayContent} />
-                {toolCalls.length > 0 &&
-                  toolCalls.map((call) => (
+                {visibleToolCalls.length > 0 &&
+                  visibleToolCalls.map((call) => (
                     <ToolCallCard
                       key={call.id}
                       call={call}

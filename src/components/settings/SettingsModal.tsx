@@ -6,7 +6,6 @@ import {
 } from "react";
 import {
   Archive,
-  Bell,
   Brain,
   Cpu,
   Hammer,
@@ -40,13 +39,6 @@ const CATEGORIES: CategoryMeta[] = [
     label: "Appearance",
     icon: Palette,
     description: "Theme, typography, and accent color.",
-    group: "General",
-  },
-  {
-    id: "notifications",
-    label: "Notifications",
-    icon: Bell,
-    description: "Desktop alerts, sounds, and quiet hours.",
     group: "General",
   },
   {
@@ -159,11 +151,6 @@ const PAGES: Record<SettingsCategory, SettingsPage> = {
   advanced: lazy(() =>
     import("@/components/settings/AdvancedSettings").then((m) => ({
       default: m.AdvancedSettings,
-    })),
-  ),
-  notifications: lazy(() =>
-    import("@/components/settings/NotificationSettings").then((m) => ({
-      default: m.NotificationSettings,
     })),
   ),
   haptics: lazy(() =>

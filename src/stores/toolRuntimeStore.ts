@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import type { ToolCall, ToolPermissionMode } from "@/lib/tools";
+import { cloneToolCall, type ToolCall, type ToolPermissionMode } from "@/lib/tools";
 
 interface ToolRuntimeState {
   permissionMode: ToolPermissionMode;
@@ -19,7 +19,7 @@ interface ToolRuntimeState {
 
 export const useToolRuntimeStore = create<ToolRuntimeState>()(
   immer((set, get) => ({
-    permissionMode: "manual",
+    permissionMode: "auto",
     pendingCalls: [],
 
     setPermissionMode: (mode) => {
@@ -32,7 +32,7 @@ export const useToolRuntimeStore = create<ToolRuntimeState>()(
       set((state) => {
         for (const call of calls) {
           if (!state.pendingCalls.some((c) => c.id === call.id)) {
-            state.pendingCalls.push({ ...call, status: "pending" });
+            state.pendingCalls.push(cloneToolCall({ ...call, status: "pending" }));
           }
         }
       });
@@ -43,7 +43,7 @@ export const useToolRuntimeStore = create<ToolRuntimeState>()(
       set((state) => {
         const idx = state.pendingCalls.findIndex((c) => c.id === id);
         if (idx >= 0) {
-          approved = { ...state.pendingCalls[idx], status: "approved" };
+          approved = cloneToolCall({ ...state.pendingCalls[idx], status: "approved" });
           state.pendingCalls.splice(idx, 1);
         }
       });
@@ -55,11 +55,11 @@ export const useToolRuntimeStore = create<ToolRuntimeState>()(
       set((state) => {
         const idx = state.pendingCalls.findIndex((c) => c.id === id);
         if (idx >= 0) {
-          denied = {
+          denied = cloneToolCall({
             ...state.pendingCalls[idx],
             status: "denied",
             result: { success: false, error: "User denied this action." },
-          };
+          });
           state.pendingCalls.splice(idx, 1);
         }
       });
@@ -70,7 +70,7 @@ export const useToolRuntimeStore = create<ToolRuntimeState>()(
       const approved: ToolCall[] = [];
       set((state) => {
         for (const call of state.pendingCalls) {
-          approved.push({ ...call, status: "approved" });
+          approved.push(cloneToolCall({ ...call, status: "approved" }));
         }
         state.pendingCalls = [];
       });
@@ -81,11 +81,11 @@ export const useToolRuntimeStore = create<ToolRuntimeState>()(
       const denied: ToolCall[] = [];
       set((state) => {
         for (const call of state.pendingCalls) {
-          denied.push({
+          denied.push(cloneToolCall({
             ...call,
             status: "denied",
             result: { success: false, error: "User denied this action." },
-          });
+          }));
         }
         state.pendingCalls = [];
       });
@@ -108,7 +108,7 @@ export const useToolRuntimeStore = create<ToolRuntimeState>()(
       set((state) => {
         const idx = state.pendingCalls.findIndex((c) => c.id === call.id);
         if (idx >= 0) {
-          state.pendingCalls[idx] = call;
+          state.pendingCalls[idx] = cloneToolCall(call);
         }
       });
     },

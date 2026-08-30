@@ -338,6 +338,7 @@ pub fn run() {
             commands::quick_chat::resize_quick_chat,
             commands::quick_chat::hide_quick_chat,
             commands::quick_chat::submit_quick_chat,
+            commands::system::get_cwd,
             commands::system::get_app_info,
             commands::system::clear_all_data,
             commands::system::factory_reset,

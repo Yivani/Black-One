@@ -89,19 +89,16 @@ const PERMISSION_MODES = [
   {
     id: "manual" as const,
     label: "Manual",
-    short: "M",
     description: "Approve every file or shell action before it runs.",
   },
   {
     id: "auto" as const,
     label: "Auto",
-    short: "A",
-    description: "Low-risk edits run instantly. Deletes, renames, and shell still ask.",
+    description: "Reads and folder listings run instantly. Changes and commands still ask.",
   },
   {
     id: "yolo" as const,
     label: "YOLO",
-    short: "Y",
     description: "All file and shell actions run without asking.",
   },
 ];
@@ -128,6 +125,7 @@ function clampEffortIndex(levels: string[], current: string): number {
 function PermissionModeToggle() {
   const mode = useToolRuntimeStore((s) => s.permissionMode);
   const setMode = useToolRuntimeStore((s) => s.setPermissionMode);
+  const updateSection = useSettingsStore((s) => s.updateSection);
   const active = PERMISSION_MODES.find((m) => m.id === mode) ?? PERMISSION_MODES[0];
 
   const modeColor =
@@ -149,12 +147,23 @@ function PermissionModeToggle() {
           aria-label={`Tool permission: ${active.label}`}
         >
           <Shield className="size-3" aria-hidden />
-          <span>{active.short}</span>
+          <span>{active.label}</span>
           <ChevronDown className="size-3 opacity-70" aria-hidden />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64 p-1.5">
-        <DropdownMenuRadioGroup value={mode} onValueChange={(value) => setMode(value as typeof mode)}>
+        <DropdownMenuRadioGroup
+          value={mode}
+          onValueChange={(value) => {
+            const next = value as typeof mode;
+            setMode(next);
+            if (next !== "yolo") {
+              updateSection("tools", {
+                permission: next === "auto" ? "allowlisted" : "ask",
+              });
+            }
+          }}
+        >
           {PERMISSION_MODES.map((m) => (
             <DropdownMenuRadioItem
               key={m.id}
@@ -693,11 +702,9 @@ export function Composer({ variant = "default", onSubmit }: ComposerProps) {
                   onPaste={handlePaste}
                   rows={1}
                   placeholder={
-                    viewMode === "chat"
-                      ? "Ask anything…"
-                      : viewMode === "agent"
-                        ? "Describe the outcome…"
-                        : "What should we change?"
+                    viewMode === "agent"
+                      ? "Describe the outcome…"
+                      : "What should we change?"
                   }
                   aria-label="Message Black One"
                   className="min-h-8 resize-none border-0 bg-transparent px-2 py-1.5 text-sm shadow-none focus-visible:ring-0"
@@ -763,7 +770,7 @@ export function Composer({ variant = "default", onSubmit }: ComposerProps) {
           </Popover>
           <ModelSelector />
           <ModelOptions />
-          {viewMode !== "chat" && <PermissionModeToggle />}
+          <PermissionModeToggle />
           {isStreaming ? (
             <Button
               size="icon"
