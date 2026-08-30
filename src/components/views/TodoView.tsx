@@ -1,9 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Check,
   Circle,
-  ExternalLink,
   GripVertical,
   Loader2,
   Pause,
@@ -15,6 +14,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   DndContext,
   DragOverlay,
@@ -166,7 +166,7 @@ function TodoStatus({ item }: { item: TodoItem }) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-foreground">
         <Loader2 className="size-3 animate-spin" aria-hidden />
-        Agent {item.pass ?? 1}/{item.multiAgent ? 2 : 1} working
+        Pass {item.pass ?? 1}/{item.multiAgent ? 2 : 1} working
       </span>
     );
   }
@@ -182,7 +182,7 @@ function TodoStatus({ item }: { item: TodoItem }) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-destructive">
         <X className="size-3" aria-hidden />
-        {item.error ?? "Agent stopped"}
+        {item.error ?? "Work stopped"}
       </span>
     );
   }
@@ -233,7 +233,6 @@ function TodoCard({ item }: { item: TodoItem }) {
   const updateTodo = useTodoStore((state) => state.updateTodo);
   const moveTodo = useTodoStore((state) => state.moveTodo);
   const removeTodo = useTodoStore((state) => state.removeTodo);
-  const selectSession = useSessionStore((state) => state.selectSession);
   const sessionMessages = useChatStore((state) =>
     item.sessionId
       ? (state.messagesBySession[item.sessionId] ?? EMPTY_MESSAGES)
@@ -284,7 +283,7 @@ function TodoCard({ item }: { item: TodoItem }) {
     if (lastAssistant.status !== "complete") {
       updateTodo(item.id, {
         status: "error",
-        error: lastAssistant.errorMessage ?? "Agent did not finish",
+        error: lastAssistant.errorMessage ?? "Work did not finish",
         blockedMessageId: undefined,
       });
       return;
@@ -297,7 +296,7 @@ function TodoCard({ item }: { item: TodoItem }) {
     ) {
       updateTodo(item.id, {
         status: "error",
-        error: "Agent stopped after describing the work",
+        error: "Work stopped after describing the task",
         blockedMessageId: undefined,
       });
       return;
@@ -339,6 +338,10 @@ function TodoCard({ item }: { item: TodoItem }) {
       blockedMessageId: undefined,
     });
   };
+
+  useEffect(() => {
+    if (canResumeBlocked) resumeBlocked();
+  }, [canResumeBlocked, lastAssistant?.id]);
 
   return (
     <article
@@ -434,18 +437,6 @@ function TodoCard({ item }: { item: TodoItem }) {
               }
             >
               <Play className="size-3.5" aria-hidden />
-            </Button>
-          )}
-          {item.sessionId && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-6 text-muted-foreground"
-              onClick={() => selectSession(item.sessionId!)}
-              aria-label={`Open agent session for ${item.text}`}
-            >
-              <ExternalLink className="size-3.5" aria-hidden />
             </Button>
           )}
           <Button
@@ -699,7 +690,7 @@ async function executeTodo(todoId: string): Promise<RunResult> {
     if (!lastAssistant || lastAssistant.status !== "complete") {
       useTodoStore.getState().updateTodo(todoId, {
         status: "error",
-        error: lastAssistant?.errorMessage ?? "Agent did not finish",
+        error: lastAssistant?.errorMessage ?? "Work did not finish",
       });
       return "error";
     }
@@ -711,7 +702,7 @@ async function executeTodo(todoId: string): Promise<RunResult> {
     ) {
       useTodoStore.getState().updateTodo(todoId, {
         status: "error",
-        error: "Agent stopped after describing the work",
+        error: "Work stopped after describing the task",
       });
       return "error";
     }
@@ -783,6 +774,14 @@ export function TodoView() {
   const pendingApprovals = useToolRuntimeStore(
     (state) => state.pendingCalls.length,
   );
+  const permissionMode = useToolRuntimeStore(
+    (state) => state.permissionMode,
+  );
+  const setPermissionMode = useToolRuntimeStore(
+    (state) => state.setPermissionMode,
+  );
+  const updateSettings = useSettingsStore((state) => state.updateSection);
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -794,6 +793,24 @@ export function TodoView() {
     streamingSessionId !== null ||
     chatQueueLength > 0 ||
     pendingApprovals > 0;
+  const changePermissionMode = async (value: string) => {
+    const next = value as typeof permissionMode;
+    setPermissionMode(next);
+    if (next !== "yolo") {
+      updateSettings("tools", {
+        permission: next === "auto" ? "allowlisted" : "ask",
+      });
+      return;
+    }
+    if (!activeSessionId) return;
+    try {
+      await useChatStore.getState().approvePendingTools(activeSessionId);
+    } catch (error) {
+      toast.error("Could not resume Todo tools", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingItem = draggingId
@@ -833,11 +850,28 @@ export function TodoView() {
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Agents work Critical to Low. Drag tasks between lanes or change their priority.
+            Work runs Critical to Low. Drag tasks between lanes or change their priority.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          <Select
+            value={permissionMode}
+            onValueChange={(value) => void changePermissionMode(value)}
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-8 w-24 text-xs"
+              aria-label="Todo tool permission"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="manual">Manual</SelectItem>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="yolo">YOLO</SelectItem>
+            </SelectContent>
+          </Select>
           {completed > 0 && (
             <Button
               type="button"
@@ -883,7 +917,9 @@ export function TodoView() {
             </p>
           ) : agentBusy ? (
             <p className="text-xs text-muted-foreground">
-              Finish the active Agent work or pending approval before starting Todo.
+              {pendingApprovals > 0
+                ? "Tool approval is waiting. Switch to YOLO to resume it."
+                : "Current work is still finishing before Todo can start."}
             </p>
           ) : queued > 0 ? (
             <p className="text-xs text-muted-foreground">

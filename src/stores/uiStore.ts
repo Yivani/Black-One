@@ -10,8 +10,8 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from "@/lib/constants";
 
-export type RightPanelTab = "sources" | "files" | "preview" | "agent";
-export type ViewMode = "agent" | "code" | "todo";
+export type RightPanelTab = "sources" | "files" | "preview";
+export type ViewMode = "code" | "todo";
 
 export type LayoutId = "default" | "focus" | "terminal" | "quad" | string;
 
@@ -45,6 +45,11 @@ function cloneTitleBarLayout(layout: TitleBarLayout): TitleBarLayout {
   };
 }
 
+function normalizeRightPanelTab(tab: unknown): RightPanelTab {
+  if (tab === "files" || tab === "preview" || tab === "sources") return tab;
+  return tab === "agent" ? "files" : "sources";
+}
+
 export interface SavedLayout {
   id: LayoutId;
   name: string;
@@ -59,22 +64,17 @@ export interface SavedLayout {
 export const LAYOUT_PRESETS: SavedLayout[] = [
   { id: "default", name: "Default", zenMode: false, rightPanelOpen: false, rightPanelTab: "sources", sidebarPosition: "left", rightPanelPosition: "left" },
   { id: "focus", name: "Focus", zenMode: true, rightPanelOpen: false, rightPanelTab: "sources", sidebarPosition: "left", rightPanelPosition: "left" },
-  { id: "terminal", name: "Terminal deck", zenMode: true, rightPanelOpen: true, rightPanelTab: "agent", sidebarPosition: "left", rightPanelPosition: "left" },
+  { id: "terminal", name: "Terminal deck", zenMode: true, rightPanelOpen: true, rightPanelTab: "files", sidebarPosition: "left", rightPanelPosition: "left" },
   { id: "quad", name: "Quad", zenMode: false, rightPanelOpen: true, rightPanelTab: "files", sidebarPosition: "left", rightPanelPosition: "right" },
 ];
 
 export type SettingsCategory =
-  | "model"
-  | "chat"
   | "appearance"
-  | "safety"
   | "memory"
   | "advanced"
   | "haptics"
   | "providers"
   | "shortcuts"
-  | "tools"
-  | "archive"
   | "about";
 
 interface UiState {
@@ -105,8 +105,6 @@ interface UiState {
   savedLayouts: SavedLayout[];
   /** Current top-level view mode. */
   viewMode: ViewMode;
-  /** Currently selected agent preset in the Agent workspace. */
-  selectedAgentPresetId: string | null;
   /** Whether the inline layout editor is active. */
   layoutEditing: boolean;
   titleBarLayout: TitleBarLayout;
@@ -126,7 +124,6 @@ interface UiState {
   saveCurrentLayout: (name: string, patch?: Partial<SavedLayout>) => void;
   deleteSavedLayout: (id: LayoutId) => void;
   setViewMode: (mode: ViewMode) => void;
-  setSelectedAgentPresetId: (id: string | null) => void;
   openSettings: (category?: SettingsCategory) => void;
   closeSettings: () => void;
   setSettingsCategory: (category: SettingsCategory) => void;
@@ -179,12 +176,12 @@ export const useUiStore = create<UiState>()(
       "ui:rightPanelWidth",
       RIGHT_PANEL_DEFAULT_WIDTH,
     ),
-    rightPanelTab: initialLayoutConfig.rightPanelTab,
+    rightPanelTab: normalizeRightPanelTab(initialLayoutConfig.rightPanelTab),
     zenMode: initialLayoutConfig.zenMode,
     sidebarPosition: initialLayoutConfig.sidebarPosition,
     rightPanelPosition: initialLayoutConfig.rightPanelPosition,
     settingsOpen: false,
-    settingsCategory: "model",
+    settingsCategory: "appearance",
     commandPaletteOpen: false,
     sidebarSearch: "",
     composerFocusSignal: 0,
@@ -194,8 +191,7 @@ export const useUiStore = create<UiState>()(
     previewMessageId: null,
     layout: initialLayoutId,
     savedLayouts: initialSavedLayouts,
-    viewMode: "agent",
-    selectedAgentPresetId: null,
+    viewMode: "code",
     layoutEditing: false,
     titleBarLayout: readInitial(
       "ui:titleBarLayout",
@@ -277,7 +273,7 @@ export const useUiStore = create<UiState>()(
         state.layout = id;
         state.zenMode = config.zenMode;
         state.rightPanelOpen = config.rightPanelOpen;
-        state.rightPanelTab = config.rightPanelTab;
+        state.rightPanelTab = normalizeRightPanelTab(config.rightPanelTab);
         state.sidebarPosition = config.sidebarPosition;
         state.rightPanelPosition = config.rightPanelPosition;
         if (config.titleBarLayout) {
@@ -319,11 +315,6 @@ export const useUiStore = create<UiState>()(
     setViewMode: (mode) =>
       set((state) => {
         state.viewMode = mode;
-      }),
-
-    setSelectedAgentPresetId: (id) =>
-      set((state) => {
-        state.selectedAgentPresetId = id;
       }),
 
     openSettings: (category) =>

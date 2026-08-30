@@ -1,11 +1,5 @@
-import type { ModelInfo, Provider } from "@/types/models";
 import { persistence } from "@/lib/persistence";
-import { streamChatCompletion } from "@/lib/api";
-import {
-  buildMemoryExtractionPrompt,
-  extractExplicitMemory,
-  parseMemoryExtraction,
-} from "@/lib/memoryPrompt";
+import { extractExplicitMemory } from "@/lib/memoryPrompt";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   escapeMemoryText,
@@ -75,7 +69,6 @@ export const ALL_CATEGORY_IDS: string[] = PREDEFINED_CATEGORIES.map((c) => c.id)
 
 const HARD_MAX_BYTES = 1 * 1024 * 1024; // 1 MiB absolute cap
 const MAX_PROMPT_CHARS = 24_000;
-const MAX_EXTRACTED_ENTRIES = 12;
 const MEMORY_JSONL_KEY = "app:memory";
 const MEMORY_MD_KEY = "app:memory-md";
 const EXPLICIT_MEMORY_BACKFILL_KEY = "app:memory-explicit-backfill-v1";
@@ -281,6 +274,16 @@ export function deleteMemoryBank(): Promise<void> {
   return mutateMemory(() => persistence.deleteMemoryFile());
 }
 
+export function deleteMemoryEntry(id: string): Promise<boolean> {
+  return mutateMemory(async () => {
+    const bank = await loadMemoryBank();
+    const entries = bank.entries.filter((entry) => entry.id !== id);
+    if (entries.length === bank.entries.length) return false;
+    await saveMemoryBank({ ...bank, entries });
+    return true;
+  });
+}
+
 export async function recoverExplicitMemories(): Promise<number> {
   if (await persistence.getSetting(EXPLICIT_MEMORY_BACKFILL_KEY)) return 0;
 
@@ -311,13 +314,9 @@ export interface MemoryExtractionResult {
   entries: Array<{ category: string; content: string }>;
 }
 
-export async function extractAndStoreMemory(
+export async function storeExplicitMemory(
   sessionId: string,
   userContent: string,
-  assistantContent: string,
-  provider: Provider,
-  model: ModelInfo,
-  apiKey: string | null | undefined,
 ): Promise<MemoryExtractionResult> {
   const startedAt = performance.now();
   const emptyResult: MemoryExtractionResult = {
@@ -338,57 +337,5 @@ export async function extractAndStoreMemory(
       entries: saved.map((entry) => ({ category: entry.category, content: entry.content })),
     };
   }
-  const prompt = buildMemoryExtractionPrompt(
-    categories,
-    userContent,
-    assistantContent,
-  );
-
-  let extraction = "";
-  const abort = new AbortController();
-  try {
-    await streamChatCompletion({
-      provider,
-      apiKey,
-      model,
-      messages: [{ role: "user", content: prompt }],
-      systemPrompt: undefined,
-      params: { temperature: 0.2, maxTokens: 512, topP: 1, effortLevel: "medium", thinkingEnabled: false },
-      signal: abort.signal,
-      onToken: (token) => {
-        extraction += token;
-      },
-    });
-  } catch (error) {
-    console.error("Memory extraction failed", error);
-    return emptyResult;
-  }
-
-  const parsed = parseMemoryExtraction(extraction);
-  if (!parsed) return emptyResult;
-
-  const inputs = parsed
-    .filter(
-      (item): item is Record<string, unknown> =>
-        item !== null && typeof item === "object",
-    )
-    .map((item) => ({
-      category: normalizeCategory(typeof item.category === "string" ? item.category : "other"),
-      content: sanitizeMemoryContent(typeof item.content === "string" ? item.content : ""),
-      importance: normalizeImportance(item.importance),
-      sessionId,
-    }))
-    .filter((item) => item.content.length > 0)
-    .slice(0, MAX_EXTRACTED_ENTRIES);
-
-  const saved = inputs.length > 0 ? await addMemoryEntries(inputs) : [];
-
-  return {
-    savedCount: saved.length,
-    durationMs: Math.round(performance.now() - startedAt),
-    entries: saved.map((entry) => ({
-      category: entry.category,
-      content: entry.content,
-    })),
-  };
+  return emptyResult;
 }

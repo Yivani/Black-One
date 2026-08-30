@@ -115,6 +115,23 @@ export interface ShellResult {
   timedOut: boolean;
 }
 
+export interface CliToolStatus {
+  id: string;
+  installed: boolean;
+  managedByNpm: boolean;
+  version?: string | null;
+}
+
+export interface CliJob {
+  id: string;
+  toolId: string;
+  action: "install" | "update" | "uninstall";
+  status: "running" | "cancelling" | "finished" | "error" | "cancelled";
+  message: string;
+  startedAt: number;
+  finishedAt?: number | null;
+}
+
 export interface QuickChatPayload {
   content: string;
   attachments: Attachment[];
@@ -293,6 +310,13 @@ export const ipc = {
 
   executeShellCommand: (command: string, cwd?: string, roots?: string[]) =>
     invokeTauri<ShellResult>("execute_shell_command", { command, cwd, roots }),
+
+  listCliToolStatuses: () => invokeTauri<CliToolStatus[]>("list_cli_tool_statuses"),
+  listCliJobs: () => invokeTauri<CliJob[]>("list_cli_jobs"),
+  runCliOperation: (toolId: string, action: CliJob["action"]) =>
+    invokeTauri<CliJob>("run_cli_operation", { toolId, action }),
+  cancelCliOperation: (jobId: string) =>
+    invokeTauri<void>("cancel_cli_operation", { jobId }),
 
   createTerminal: (cwd?: string, shell?: string) =>
     invokeTauri<TerminalSummary>("create_terminal", { cwd, shell }),

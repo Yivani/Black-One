@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { groupChatMessages } from "./chatDisplay.ts";
+import {
+  getVisibleAssistantContent,
+  groupChatMessages,
+  isStatusQuestion,
+} from "./chatDisplay.ts";
 import type { Message } from "../types/chat.ts";
 
 const message = (id: string, role: Message["role"]): Message => ({
@@ -35,4 +39,41 @@ test("groups tool continuations into one assistant turn", () => {
     ["tool-1", "tool-2", "final"],
   );
   assert.equal(rows[1].message.id, "final");
+});
+
+test("keeps direct status answers visible beside tool calls", () => {
+  assert.equal(
+    getVisibleAssistantContent(
+      {
+        id: "assistant-1",
+        status: "complete",
+        content:
+          'Not yet - the change is still in progress.\n<tool name="read_file"><path>src/app.ts</path></tool>',
+      },
+    ),
+    "Not yet - the change is still in progress.",
+  );
+  assert.equal(
+    getVisibleAssistantContent(
+      {
+        id: "assistant-1",
+        status: "complete",
+        content:
+          'I will inspect it now.\n<tool name="read_file"><path>src/app.ts</path></tool>',
+      },
+    ),
+    "",
+  );
+  assert.equal(isStatusQuestion("is it done?"), true);
+  assert.equal(
+    getVisibleAssistantContent(
+      {
+        id: "assistant-1",
+        status: "complete",
+        content: "I will inspect it now.",
+      },
+      true,
+    ),
+    "Not yet - work is still in progress.",
+  );
 });

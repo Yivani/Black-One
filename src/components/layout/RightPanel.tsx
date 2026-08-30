@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Activity,
   BookOpen,
   ChevronRight,
   ExternalLink,
@@ -26,7 +25,6 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/EmptyState";
-import { AgentDetail } from "@/components/agent/AgentDetail";
 import { GitControls } from "@/components/layout/GitControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,7 +60,6 @@ const TABS: Array<{ value: RightPanelTab; label: string; icon: LucideIcon }> = [
   { value: "sources", label: "Sources", icon: BookOpen },
   { value: "files", label: "Files", icon: FolderOpen },
   { value: "preview", label: "Preview", icon: Eye },
-  { value: "agent", label: "Agent", icon: Activity },
 ];
 
 function useActiveMessages(): Message[] {
@@ -498,10 +495,6 @@ function PreviewPane({ attachment }: { attachment: Attachment | null }) {
   );
 }
 
-function AgentPane() {
-  return <AgentDetail />;
-}
-
 interface RightPanelProps {
   position?: "left" | "right";
 }
@@ -625,7 +618,6 @@ export function RightPanel({ position = "right" }: RightPanelProps) {
           />
         )}
         {tab === "preview" && <PreviewPane attachment={previewAttachment} />}
-        {tab === "agent" && <AgentPane />}
       </div>
       <div
         role="separator"

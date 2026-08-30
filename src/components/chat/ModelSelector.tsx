@@ -182,7 +182,7 @@ export function ModelSelector() {
             className="ml-auto"
             onClick={() => {
               setOpen(false);
-              openSettings("model");
+              openSettings("providers");
             }}
           >
             <Settings2 className="size-3.5" aria-hidden />

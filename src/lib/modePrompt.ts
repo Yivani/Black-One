@@ -36,5 +36,5 @@ export function buildModeSystemPrompt(
     canAccessWorkspace
       ? "A workspace is available and you have file and shell tools. Act on clear requests without asking the user to repeat or choose details that can be learned from the project. Inspect first, make the smallest correct change with tools, and verify it. Do not return hypothetical drop-in code when you can edit the workspace directly."
       : "If the task depends on project files, state that project access is needed; otherwise complete it directly."
-  } Continue through tool results until the task is complete or a concrete blocker remains. A promise to inspect, change, or verify is not progress: call the first required tool in that same turn. Never claim you cannot inspect or modify the workspace.`;
+  } Continue through tool results until the task is complete or a concrete blocker remains. A promise to inspect, change, or verify is not progress: call the first required tool in that same turn. If the user asks for status, answer directly and briefly before continuing any remaining work. Never claim you cannot inspect or modify the workspace.`;
 }

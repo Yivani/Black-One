@@ -7,7 +7,7 @@ import type { TerminalSummary } from "@/lib/ipc";
 
 export type TerminalLayout = "grid" | "horizontal" | "vertical";
 
-let terminalCreation: Promise<void> | null = null;
+let terminalCreation: Promise<TerminalSummary | undefined> | null = null;
 
 interface TerminalState {
   terminals: TerminalSummary[];
@@ -15,13 +15,18 @@ interface TerminalState {
   bottomPanelOpen: boolean;
   bottomPanelHeight: number;
   layout: TerminalLayout;
+  terminalColors: Record<string, string>;
 
   openPanel: () => Promise<void>;
   closePanel: () => void;
-  createTerminal: (cwd?: string, shell?: string) => Promise<void>;
+  createTerminal: (
+    cwd?: string,
+    shell?: string,
+  ) => Promise<TerminalSummary | undefined>;
   closeTerminal: (id: string) => Promise<void>;
   setActiveTerminal: (id: string) => void;
   renameTerminal: (id: string, title: string) => void;
+  setTerminalColor: (id: string, color: string | null) => void;
   reorderTerminals: (fromIndex: number, toIndex: number) => void;
   setLayout: (layout: TerminalLayout) => void;
   setBottomPanelHeight: (height: number) => void;
@@ -60,6 +65,7 @@ export const useTerminalStore = create<TerminalState>()(
     bottomPanelOpen: readInitial("terminal:bottomPanelOpen", false),
     bottomPanelHeight: readInitial("terminal:bottomPanelHeight", 280),
     layout: readInitialLayout(),
+    terminalColors: {},
 
     openPanel: async () => {
       set((state) => {
@@ -94,8 +100,10 @@ export const useTerminalStore = create<TerminalState>()(
             state.bottomPanelOpen = true;
             writePersisted("terminal:bottomPanelOpen", true);
           });
+          return summary;
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "Failed to open terminal.");
+          return undefined;
         } finally {
           terminalCreation = null;
         }
@@ -112,6 +120,7 @@ export const useTerminalStore = create<TerminalState>()(
       }
       set((state) => {
         state.terminals = state.terminals.filter((t) => t.id !== id);
+        delete state.terminalColors[id];
         if (state.activeTerminalId === id) {
           state.activeTerminalId = state.terminals[state.terminals.length - 1]?.id ?? null;
         }
@@ -132,6 +141,16 @@ export const useTerminalStore = create<TerminalState>()(
       set((state) => {
         const terminal = state.terminals.find((t) => t.id === id);
         if (terminal) terminal.title = title;
+      });
+    },
+
+    setTerminalColor: (id, color) => {
+      set((state) => {
+        if (color) {
+          state.terminalColors[id] = color;
+        } else {
+          delete state.terminalColors[id];
+        }
       });
     },
 

@@ -107,8 +107,6 @@ export interface MemorySettings {
   /** Number of most recent messages sent as context. */
   contextWindowLimit: number;
   memoryPersistence: boolean;
-  /** Whether to automatically extract memories from chat turns. */
-  autoExtractMemory: boolean;
   /** Maximum memory bank size in kilobytes before pruning. */
   maxMemorySizeKb: number;
   /** Allowed memory categories. */

@@ -1,8 +1,6 @@
 import { useEffect } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useUiStore } from "@/stores/uiStore";
 import { isTauri } from "@/lib/ipc";
 
 /** Default haptic pulse length in milliseconds. */
@@ -110,28 +108,5 @@ export function useHapticFeedback(): void {
 
     document.addEventListener("click", handler, { passive: true });
     return () => document.removeEventListener("click", handler);
-  }, []);
-}
-
-/**
- * Plays the agent-finished sound when streaming ends while the active
- * view is the chat or code tab. Attach once near the app root.
- */
-export function useAgentFinishSound(): void {
-  useEffect(() => {
-    let previousStreamingId = useChatStore.getState().streamingSessionId;
-
-    return useChatStore.subscribe((state) => {
-      const wasStreaming = previousStreamingId !== null;
-      const nowStreaming = state.streamingSessionId !== null;
-      previousStreamingId = state.streamingSessionId;
-
-      if (!wasStreaming || nowStreaming) return;
-
-      const { viewMode } = useUiStore.getState();
-      if (viewMode === "todo") return;
-
-      playFinishSound();
-    });
   }, []);
 }

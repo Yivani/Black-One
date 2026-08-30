@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractExplicitMemory, parseMemoryExtraction } from "./memoryPrompt.ts";
+import { extractExplicitMemory } from "./memoryPrompt.ts";
 
 test("extracts an explicit personal-memory request", () => {
   assert.deepEqual(
@@ -24,14 +24,4 @@ test("classifies explicit preferences without an extraction request", () => {
     extractExplicitMemory("Remember that I prefer compact answers")?.category,
     "preferences",
   );
-});
-
-test("parses fenced or prefixed extraction arrays and rejects objects", () => {
-  assert.deepEqual(parseMemoryExtraction("```json\n[{\"content\":\"fact\"}]\n```"), [
-    { content: "fact" },
-  ]);
-  assert.deepEqual(parseMemoryExtraction("Result: [{\"content\":\"fact\"}]"), [
-    { content: "fact" },
-  ]);
-  assert.equal(parseMemoryExtraction('{"content":"fact"}'), null);
 });

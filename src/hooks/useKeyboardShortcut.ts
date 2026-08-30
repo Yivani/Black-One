@@ -36,8 +36,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 /**
  * Registers global keyboard shortcuts from the user's settings.
- * Escape and modal-level shortcuts fire even inside editable elements;
- * everything else is suppressed while typing.
+ * Only explicitly global shortcuts fire inside editable elements.
+ * Stop generation stays on its visible control while the user is typing.
  */
 export function useKeyboardShortcut(handlers: ShortcutHandlers): void {
   const handlersRef = useRef(handlers);
@@ -52,7 +52,7 @@ export function useKeyboardShortcut(handlers: ShortcutHandlers): void {
       if (!actionId) return;
       const handler = handlersRef.current[actionId];
       if (!handler) return;
-      const globalActions = new Set(["stop-generation", "open-settings", "command-palette", "new-terminal"]);
+      const globalActions = new Set(["open-settings", "command-palette", "new-terminal"]);
       if (isEditableTarget(event.target) && !globalActions.has(actionId)) return;
       const result = handler();
       if (result !== false) event.preventDefault();

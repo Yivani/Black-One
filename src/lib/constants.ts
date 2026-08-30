@@ -77,18 +77,6 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     label: "Toggle Quick Chat",
     defaultBinding: "Mod+Shift+Space",
   },
-  { id: "new-chat", label: "New chat", defaultBinding: "Mod+N" },
-  {
-    id: "new-chat-window",
-    label: "New chat in new window",
-    defaultBinding: "Mod+Shift+N",
-  },
-  { id: "attach-file", label: "Attach file", defaultBinding: "Mod+O" },
-  {
-    id: "attach-folder",
-    label: "Attach folder",
-    defaultBinding: "Mod+Shift+O",
-  },
   { id: "toggle-sidebar", label: "Toggle sidebar", defaultBinding: "Mod+B" },
   {
     id: "toggle-right-sidebar",
@@ -98,27 +86,9 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   { id: "open-settings", label: "Open settings", defaultBinding: "Mod+," },
   {
     id: "command-palette",
-    label: "Command palette / model search",
+    label: "Command palette",
     defaultBinding: "Mod+K",
   },
-  {
-    id: "copy-last-response",
-    label: "Copy last response",
-    defaultBinding: "Mod+Shift+C",
-  },
-  { id: "focus-composer", label: "Focus composer", defaultBinding: "Mod+/" },
-  {
-    id: "edit-last-message",
-    label: "Edit last message",
-    defaultBinding: "Mod+Up",
-  },
-  {
-    id: "stop-generation",
-    label: "Stop generation / close modal",
-    defaultBinding: "Escape",
-  },
-  { id: "prev-chat", label: "Previous chat", defaultBinding: "Mod+Shift+[" },
-  { id: "next-chat", label: "Next chat", defaultBinding: "Mod+Shift+]" },
   {
     id: "toggle-dark-mode",
     label: "Toggle dark mode",
@@ -517,7 +487,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   memory: {
     contextWindowLimit: 50,
     memoryPersistence: true,
-    autoExtractMemory: true,
     maxMemorySizeKb: 256,
     memoryCategories: [
       "personal",

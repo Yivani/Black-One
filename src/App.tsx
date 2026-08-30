@@ -6,7 +6,7 @@ import { SettingsModal } from "@/components/settings/SettingsModal";
 import { CommandPalette } from "@/components/chat/CommandPalette";
 import { VibeHearts } from "@/components/chat/VibeHearts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAgentFinishSound, useHapticFeedback } from "@/hooks/useHaptics";
+import { useHapticFeedback } from "@/hooks/useHaptics";
 import { useKeyboardShortcut, type ShortcutHandlers } from "@/hooks/useKeyboardShortcut";
 import { toggleDarkMode, useResolvedDark, useTheme } from "@/hooks/useTheme";
 import { ipc, isTauri, type QuickChatPayload } from "@/lib/ipc";
@@ -58,39 +58,7 @@ export function useAppBootstrap(recoverMemory = true): boolean {
   return booted && settingsLoaded && sessionsLoaded;
 }
 
-function openAuxWindow(): void {
-  if (isTauri) {
-    void import("@tauri-apps/api/webviewWindow")
-      .then(({ WebviewWindow }) => {
-        const label = `black-one-${Date.now()}`;
-        new WebviewWindow(label, {
-          url: window.location.href,
-          title: "Black One",
-          width: 1200,
-          height: 800,
-        });
-      })
-      .catch(() => toast.error("Could not open a new window."));
-    return;
-  }
-  window.open(window.location.href, "_blank", "noopener");
-}
-
-function cycleSession(direction: 1 | -1): void {
-  const { sessions, activeSessionId, selectSession } = useSessionStore.getState();
-  if (sessions.length === 0) return;
-  const index = sessions.findIndex((s) => s.id === activeSessionId);
-  const next = sessions[(index + direction + sessions.length) % sessions.length];
-  selectSession(next.id);
-}
-
 const shortcutHandlers: ShortcutHandlers = {
-  "new-chat": () => {
-    void useSessionStore.getState().createSession();
-  },
-  "new-chat-window": () => openAuxWindow(),
-  "attach-file": () => useUiStore.getState().requestAttachFile(),
-  "attach-folder": () => useUiStore.getState().requestAttachFolder(),
   "toggle-sidebar": () => useUiStore.getState().toggleSidebar(),
   "toggle-right-sidebar": () => useUiStore.getState().toggleRightPanel(),
   "open-settings": () => useUiStore.getState().openSettings(),
@@ -98,29 +66,6 @@ const shortcutHandlers: ShortcutHandlers = {
     const ui = useUiStore.getState();
     ui.setCommandPaletteOpen(!ui.commandPaletteOpen);
   },
-  "copy-last-response": () => {
-    const content = useChatStore.getState().getLastResponse();
-    if (!content) {
-      toast.info("No response to copy yet.");
-      return;
-    }
-    navigator.clipboard
-      .writeText(content)
-      .then(() => toast.success("Last response copied."))
-      .catch(() => toast.error("Copy failed."));
-  },
-  "focus-composer": () => useUiStore.getState().requestComposerFocus(),
-  "edit-last-message": () => useUiStore.getState().requestEditLastMessage(),
-  "stop-generation": () => {
-    const streaming = useChatStore.getState().streamingSessionId !== null;
-    if (streaming) {
-      useChatStore.getState().stopStreaming();
-      return;
-    }
-    return false;
-  },
-  "prev-chat": () => cycleSession(-1),
-  "next-chat": () => cycleSession(1),
   "toggle-dark-mode": () => toggleDarkMode(),
   "zen-mode": () => useUiStore.getState().toggleZenMode(),
   "new-terminal": () => {
@@ -151,7 +96,6 @@ export function App() {
   const dark = useResolvedDark();
   useTheme();
   useHapticFeedback();
-  useAgentFinishSound();
   useKeyboardShortcut(shortcutHandlers);
   const settingsLoaded = useSettingsStore((s) => s.isLoaded);
   const quickChatShortcut = useSettingsStore(
@@ -171,7 +115,7 @@ export function App() {
     let unlisten: (() => void) | undefined;
     void listen<QuickChatPayload>("quick-chat-submit", ({ payload }) => {
       void (async () => {
-        useUiStore.getState().setViewMode("agent");
+        useUiStore.getState().setViewMode("code");
         useModelStore.getState().selectModel(payload.modelId);
         await useSessionStore.getState().createSession({ title: "New chat" });
         void useChatStore

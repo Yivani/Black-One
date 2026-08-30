@@ -48,6 +48,7 @@ fn load_start_minimized(state: &state::AppState) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(commands::cli::CliManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -324,6 +325,10 @@ pub fn run() {
             commands::file_system::write_memory_file,
             commands::file_system::delete_memory_file,
             commands::shell::execute_shell_command,
+            commands::cli::list_cli_tool_statuses,
+            commands::cli::list_cli_jobs,
+            commands::cli::run_cli_operation,
+            commands::cli::cancel_cli_operation,
             commands::git::git_status,
             commands::git::git_init,
             commands::git::git_stage_all,

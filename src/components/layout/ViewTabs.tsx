@@ -3,7 +3,6 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
 
 const VIEWS = [
-  { id: "agent" as const, label: "Agent" },
   { id: "code" as const, label: "Code" },
   { id: "todo" as const, label: "Todo" },
 ];

@@ -161,6 +161,20 @@ function PermissionModeToggle() {
               updateSection("tools", {
                 permission: next === "auto" ? "allowlisted" : "ask",
               });
+            } else {
+              const sessionId =
+                useSessionStore.getState().activeSessionId;
+              if (sessionId) {
+                void useChatStore
+                  .getState()
+                  .approvePendingTools(sessionId)
+                  .catch((error) =>
+                    toast.error("Could not resume tools", {
+                      description:
+                        error instanceof Error ? error.message : String(error),
+                    }),
+                  );
+              }
             }
           }}
         >
@@ -702,7 +716,7 @@ export function Composer({ variant = "default", onSubmit }: ComposerProps) {
                   onPaste={handlePaste}
                   rows={1}
                   placeholder={
-                    viewMode === "agent"
+                    viewMode === "todo"
                       ? "Describe the outcome…"
                       : "What should we change?"
                   }

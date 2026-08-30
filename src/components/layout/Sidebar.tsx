@@ -1,109 +1,54 @@
 import {
-  useEffect,
-  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import {
-  DndContext,
-  PointerSensor,
-  useDraggable,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
-import {
-  AlertCircle,
-  Archive,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Copy,
-  Download,
-  ExternalLink,
-  Folder,
-  GitBranch,
-  ListOrdered,
+  Circle,
+  ListTodo,
   Loader2,
-  MessageSquare,
-  MoreVertical,
-  PauseCircle,
   Pencil,
-  Pin,
-  PinOff,
   Plus,
-  SearchX,
-  Sparkles,
   Terminal,
   Trash2,
 } from "lucide-react";
 import { CommandCenterButton } from "@/components/analytics/CommandCenterButton";
 import { UpdateButton } from "@/components/analytics/UpdateButton";
-import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
-import {
-  ContextMenu,
-  type ContextMenuEntry,
-} from "@/components/shared/ContextMenu";
-import { EmptyState } from "@/components/shared/EmptyState";
-import { SearchInput } from "@/components/shared/SearchInput";
-import { Badge } from "@/components/ui/badge";
+import { ContextMenu } from "@/components/shared/ContextMenu";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { toast } from "sonner";
-import { isTauri } from "@/lib/ipc";
-import { SESSION_TITLE_MAX_LENGTH } from "@/lib/constants";
-import { cn, compactTitle, groupSessionsByDate } from "@/lib/utils";
-import { generateSessionTitle, type OutgoingMessage } from "@/lib/api";
-import { useChatStore } from "@/stores/chatStore";
-import { useModelStore } from "@/stores/modelStore";
-import { useSessionStore } from "@/stores/sessionStore";
+import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { useTodoStore } from "@/stores/todoStore";
 import { useUiStore } from "@/stores/uiStore";
-import type { ChatFolder, ChatSession, DateGroup } from "@/types/session";
+import type { TodoItem } from "@/lib/todoCore";
 
-const CHATS_ROOT_ID = "chats-root";
-
-const FOLDER_COLORS = [
-  { name: "Slate", value: "#64748b" },
-  { name: "Moss", value: "#2e7d4f" },
-  { name: "Ochre", value: "#b45309" },
-  { name: "Iris", value: "#6d5bd0" },
+const TERMINAL_COLORS = [
+  { label: "Default", value: null, swatch: "#737373" },
+  { label: "Slate", value: "#64748b", swatch: "#64748b" },
+  { label: "Moss", value: "#2e7d4f", swatch: "#2e7d4f" },
+  { label: "Ochre", value: "#b45309", swatch: "#b45309" },
+  { label: "Iris", value: "#6d5bd0", swatch: "#6d5bd0" },
 ] as const;
 
 interface TipButtonProps {
   label: string;
   onClick: () => void;
   children: ReactNode;
-  className?: string;
+  active?: boolean;
 }
 
-function TipButton({ label, onClick, children, className }: TipButtonProps) {
+function TipButton({ label, onClick, children, active }: TipButtonProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -111,781 +56,81 @@ function TipButton({ label, onClick, children, className }: TipButtonProps) {
           variant="ghost"
           size="icon"
           aria-label={label}
+          aria-current={active ? "page" : undefined}
           onClick={onClick}
-          className={cn("size-8", className)}
+          className={cn(
+            "size-8",
+            active && "bg-accent text-accent-foreground",
+          )}
         >
           {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
   );
 }
 
-async function exportAndSave(
-  session: ChatSession,
-  format: "json" | "markdown",
-): Promise<void> {
-  const content = await useSessionStore
-    .getState()
-    .exportSession(session.id, format);
-  if (!content) return;
-  const extension = format === "json" ? "json" : "md";
-  const filename = `${session.title.replace(/[\\/:*?"<>|]/g, "_")}.${extension}`;
-  if (isTauri) {
-    const [{ save }, { writeTextFile }] = await Promise.all([
-      import("@tauri-apps/plugin-dialog"),
-      import("@tauri-apps/plugin-fs"),
-    ]);
-    const path = await save({
-      defaultPath: filename,
-      filters: [
-        {
-          name: format === "json" ? "JSON" : "Markdown",
-          extensions: [extension],
-        },
-      ],
-    });
-    if (path) await writeTextFile(path, content);
-  } else {
-    const blob = new Blob([content], {
-      type: format === "json" ? "application/json" : "text/markdown",
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }
-}
-
-function openInNewWindow(): void {
-  if (isTauri) {
-    void import("@tauri-apps/api/webviewWindow")
-      .then(({ WebviewWindow }) => {
-        const label = `black-one-${Date.now()}`;
-        new WebviewWindow(label, {
-          url: window.location.href,
-          title: "Black One",
-          width: 1200,
-          height: 800,
-        });
-      })
-      .catch(() => toast.error("Could not open a new window."));
-    return;
-  }
-  window.open(window.location.href, "_blank", "noopener");
-}
-
-interface SessionRowProps {
-  session: ChatSession;
-  isActive: boolean;
-  isEditing: boolean;
-  onStartRename: () => void;
-  onCommitRename: (title: string) => void;
-  onCancelRename: () => void;
-  onRequestDelete: () => void;
-}
-
-function SessionRow({
-  session,
-  isActive,
-  isEditing,
-  onStartRename,
-  onCommitRename,
-  onCancelRename,
-  onRequestDelete,
-}: SessionRowProps) {
-  const selectSession = useSessionStore((s) => s.selectSession);
-  const togglePin = useSessionStore((s) => s.togglePin);
-  const isRunning = useChatStore((s) => s.streamingSessionId === session.id);
-  const isQueued = useChatStore((s) =>
-    s.queue.some((q) => q.sessionId === session.id),
-  );
-  const messages = useChatStore((s) => s.messagesBySession[session.id]);
-  const duplicateSession = useSessionStore((s) => s.duplicateSession);
-  const archiveSession = useSessionStore((s) => s.archiveSession);
-  const moveToFolder = useSessionStore((s) => s.moveToFolder);
-  const markUnread = useSessionStore((s) => s.markUnread);
-  const folders = useSessionStore((s) => s.folders);
-  const branchFromMessage = useChatStore((s) => s.branchFromMessage);
-  const setViewMode = useUiStore((s) => s.setViewMode);
-  const createTerminal = useTerminalStore((s) => s.createTerminal);
-  const [draft, setDraft] = useState(session.title);
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: `session:${session.id}`,
-    });
-
-  useEffect(() => {
-    if (isActive && session.unread) {
-      void markUnread(session.id, false);
-    }
-  }, [isActive, session.id, session.unread, markUnread]);
-
-  const moveItems: ContextMenuEntry[] = folders
-    .filter((folder) => folder.id !== session.folderId)
-    .map((folder) => ({
-      label: `Move to “${folder.name}”`,
-      onSelect: () => void moveToFolder(session.id, folder.id),
-    }));
-
-  if (session.folderId) {
-    moveItems.push({
-      label: "Remove from folder",
-      onSelect: () => void moveToFolder(session.id, null),
-      separatorAfter: true,
-    });
-  } else if (moveItems.length > 0) {
-    moveItems[moveItems.length - 1].separatorAfter = true;
-  }
-
-  const handleGenerateTitle = async () => {
-    const selected = useModelStore.getState().getSelectedModel();
-    if (!selected || selected.provider.type === "demo") {
-      toast.error("Connect a real provider to generate titles with AI.");
-      return;
-    }
-    const apiKey = await useModelStore
-      .getState()
-      .getApiKey(selected.provider.id);
-    if (!apiKey) {
-      toast.error("No API key found for the selected provider.");
-      return;
-    }
-
-    let sessionMessages = messages;
-    if (!sessionMessages) {
-      await useChatStore.getState().loadMessages(session.id);
-      sessionMessages = useChatStore.getState().messagesBySession[session.id];
-    }
-
-    const outgoing: OutgoingMessage[] = (sessionMessages ?? [])
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, content: m.content }));
-
-    if (outgoing.length === 0) {
-      toast.error("No messages to base a title on.");
-      return;
-    }
-
-    const customHeaders =
-      useSettingsStore.getState().settings.advanced.customHeaders;
-    const title = await generateSessionTitle(
-      outgoing,
-      selected.provider,
-      selected.model,
-      apiKey,
-      customHeaders,
-    );
-
-    if (title) {
-      await useSessionStore.getState().renameSession(session.id, title);
-      toast.success("Title updated", { description: title });
-    } else {
-      toast.error("Could not generate a title.");
-    }
-  };
-
-  const menuItems: ContextMenuEntry[] = [
-    { label: "Rename", icon: Pencil, onSelect: onStartRename },
-    {
-      label: "Generate title with AI",
-      icon: Sparkles,
-      onSelect: () => void handleGenerateTitle(),
-      separatorAfter: true,
-    },
-    {
-      label: "Duplicate",
-      icon: Copy,
-      onSelect: () => void duplicateSession(session.id),
-    },
-    {
-      label: "Archive",
-      icon: Archive,
-      onSelect: () => void archiveSession(session.id, true),
-      separatorAfter: true,
-    },
-    ...moveItems,
-    {
-      label: "Export JSON",
-      icon: Download,
-      onSelect: () => void exportAndSave(session, "json"),
-    },
-    {
-      label: "Export Markdown",
-      icon: Download,
-      onSelect: () => void exportAndSave(session, "markdown"),
-      separatorAfter: true,
-    },
-    {
-      label: "Delete",
-      icon: Trash2,
-      danger: true,
-      onSelect: onRequestDelete,
-    },
-  ];
-
-  const startRename = () => {
-    setDraft(session.title);
-    onStartRename();
-  };
-
-  const lastUserMessage = useMemo(
-    () => messages?.slice().reverse().find((m) => m.role === "user"),
-    [messages],
-  );
-
-  const status = useMemo<
-    "running" | "queued" | "error" | "approval" | "idle" | null
-  >(() => {
-    if (isRunning) return "running";
-    if (isQueued) return "queued";
-    const lastAssistant = messages
-      ? [...messages].reverse().find((m) => m.role === "assistant")
-      : undefined;
-    if (lastAssistant?.status === "error") return "error";
-    if (lastAssistant?.status === "stopped") return "approval";
-    if (lastAssistant?.status === "complete") return "idle";
-    return null;
-  }, [isRunning, isQueued, messages]);
-
-  const statusConfig: Record<
-    Exclude<typeof status, null>,
-    { icon: React.ElementType; label: string; className: string }
-  > = {
-    running: {
-      icon: Loader2,
-      label: "Agent running",
-      className: "text-primary animate-spin",
-    },
-    queued: {
-      icon: ListOrdered,
-      label: "Queued",
-      className: "text-muted-foreground",
-    },
-    error: { icon: AlertCircle, label: "Error", className: "text-destructive" },
-    approval: {
-      icon: PauseCircle,
-      label: "Needs approval",
-      className: "text-amber-500",
-    },
-    idle: {
-      icon: CheckCircle2,
-      label: "Finished",
-      className: "text-muted-foreground/70",
-    },
-  };
-
-  const StatusIcon = status ? statusConfig[status].icon : null;
-  const statusClassName = status ? statusConfig[status].className : "";
-  const statusLabel = status ? statusConfig[status].label : "";
-
-  return (
-    <ContextMenu items={menuItems}>
-      <div
-        ref={setNodeRef}
-        {...attributes}
-        {...listeners}
-        style={{ transform: CSS.Translate.toString(transform) }}
-        role="button"
-        tabIndex={0}
-        onClick={() => selectSession(session.id)}
-        onDoubleClick={startRename}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") selectSession(session.id);
-        }}
-        className={cn(
-          "group flex w-full cursor-default items-center gap-1.5 rounded-md px-2 py-1.5 text-left",
-          isActive
-            ? "bg-accent text-accent-foreground ring-1 ring-inset ring-primary/30"
-            : "ring-1 ring-inset ring-transparent",
-          isDragging && "opacity-50",
-        )}
-      >
-        {isEditing ? (
-          <Input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => onCommitRename(draft)}
-            onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === "Enter") onCommitRename(draft);
-              if (event.key === "Escape") onCancelRename();
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-            autoFocus
-            maxLength={SESSION_TITLE_MAX_LENGTH}
-            aria-label="Rename chat"
-            className="h-6 flex-1 px-1 text-sm"
-          />
-        ) : (
-          <>
-            {StatusIcon && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="flex shrink-0 items-center">
-                    <StatusIcon
-                      className={cn("size-3.5", statusClassName)}
-                      aria-hidden
-                    />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{statusLabel}</TooltipContent>
-              </Tooltip>
-            )}
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate text-sm",
-                session.unread && "font-semibold",
-              )}
-              title={session.title}
-            >
-              {compactTitle(session.title)}
-            </span>
-            {session.unread && (
-              <span
-                className="mr-1 size-2 rounded-full bg-primary"
-                aria-label="Unread"
-              />
-            )}
-          </>
-        )}
-        <span className="flex shrink-0 items-center gap-0.5">
-          {session.pinned && (
-            <Pin className="size-3 text-muted-foreground" aria-label="Pinned" />
-          )}
-          {!isEditing && (
-            <span className="relative flex h-5 items-center">
-              {session.messageCount > 0 && (
-                <Badge
-                  variant="secondary"
-                  className="text-[10px] transition-opacity group-hover:opacity-0"
-                >
-                  {session.messageCount}
-                </Badge>
-              )}
-              <span className="pointer-events-none absolute right-0 flex items-center opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label="Chat actions"
-                      onClick={(event) => event.stopPropagation()}
-                      className="flex size-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
-                    >
-                      <MoreVertical className="size-3.5" aria-hidden />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={() => openInNewWindow()}>
-                      <ExternalLink className="size-4" aria-hidden />
-                      Open in new window
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setViewMode("code");
-                        void createTerminal();
-                      }}
-                    >
-                      <Terminal className="size-4" aria-hidden />
-                      Open in terminal
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={startRename}>
-                      <Pencil className="size-4" aria-hidden />
-                      Rename
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => void togglePin(session.id)}>
-                      {session.pinned ? (
-                        <>
-                          <PinOff className="size-4" aria-hidden />
-                          Unpin
-                        </>
-                      ) : (
-                        <>
-                          <Pin className="size-4" aria-hidden />
-                          Pin
-                        </>
-                      )}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => void markUnread(session.id, !session.unread)}
-                    >
-                      <MessageSquare className="size-4" aria-hidden />
-                      {session.unread ? "Mark as read" : "Mark as unread"}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() =>
-                        navigator.clipboard
-                          .writeText(session.id)
-                          .then(() => toast.success("Chat ID copied."))
-                          .catch(() => toast.error("Copy failed."))
-                      }
-                    >
-                      <Copy className="size-4" aria-hidden />
-                      Copy ID
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!lastUserMessage}
-                      onClick={() => {
-                        if (lastUserMessage) void branchFromMessage(lastUserMessage.id);
-                      }}
-                    >
-                      <GitBranch className="size-4" aria-hidden />
-                      Branch
-                    </DropdownMenuItem>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>
-                        <Download className="size-4" aria-hidden />
-                        Export
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        <DropdownMenuItem
-                          onClick={() => void exportAndSave(session, "json")}
-                        >
-                          Export JSON
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => void exportAndSave(session, "markdown")}
-                        >
-                          Export Markdown
-                        </DropdownMenuItem>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                    {folders.length > 0 && (
-                      <DropdownMenuSub>
-                        <DropdownMenuSubTrigger>
-                          <Folder className="size-4" aria-hidden />
-                          Move to
-                        </DropdownMenuSubTrigger>
-                        <DropdownMenuSubContent>
-                          {folders
-                            .filter((folder) => folder.id !== session.folderId)
-                            .map((folder) => (
-                              <DropdownMenuItem
-                                key={folder.id}
-                                onClick={() =>
-                                  void moveToFolder(session.id, folder.id)
-                                }
-                              >
-                                {folder.name}
-                              </DropdownMenuItem>
-                            ))}
-                          {session.folderId && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => void moveToFolder(session.id, null)}
-                              >
-                                Remove from folder
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuSubContent>
-                      </DropdownMenuSub>
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => void archiveSession(session.id, true)}
-                    >
-                      <Archive className="size-4" aria-hidden />
-                      Archive
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onClick={onRequestDelete}
-                    >
-                      <Trash2 className="size-4" aria-hidden />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </span>
-            </span>
-          )}
-        </span>
-      </div>
-    </ContextMenu>
-  );
-}
-
-type RowPropsFactory = (session: ChatSession) => SessionRowProps;
-
-interface PendingDelete {
-  type: "session" | "folder";
-  id: string;
-  name: string;
-}
-
-interface FolderItemProps {
-  folder: ChatFolder;
-  sessions: ChatSession[];
-  rowProps: RowPropsFactory;
-  onRequestDelete: () => void;
-}
-
-function FolderItem({
-  folder,
-  sessions,
-  rowProps,
-  onRequestDelete,
-}: FolderItemProps) {
-  const renameFolder = useSessionStore((s) => s.renameFolder);
-  const setFolderColor = useSessionStore((s) => s.setFolderColor);
-  const [isRenaming, setIsRenaming] = useState(false);
-  const [draft, setDraft] = useState(folder.name);
-  const { setNodeRef, isOver } = useDroppable({ id: `folder:${folder.id}` });
-
-  const commitRename = () => {
-    setIsRenaming(false);
-    const name = draft.trim();
-    if (name && name !== folder.name) void renameFolder(folder.id, name);
-  };
-
-  const menuItems: ContextMenuEntry[] = [
-    {
-      label: "Rename",
-      icon: Pencil,
-      onSelect: () => {
-        setDraft(folder.name);
-        setIsRenaming(true);
-      },
-    },
-    ...FOLDER_COLORS.map((color) => ({
-      label: color.name,
-      swatch: {
-        color: color.value,
-        selected: folder.color === color.value,
-      },
-      onSelect: () => void setFolderColor(folder.id, color.value),
-    })),
-    {
-      label: "Clear color",
-      disabled: !folder.color,
-      onSelect: () => void setFolderColor(folder.id, undefined),
-      separatorAfter: true,
-    },
-    {
-      label: "Delete",
-      icon: Trash2,
-      danger: true,
-      onSelect: onRequestDelete,
-    },
-  ];
-
-  return (
-    <Collapsible defaultOpen>
-      <ContextMenu items={menuItems}>
-        <div
-          ref={setNodeRef}
-          className={cn("rounded-md transition-colors", isOver && "bg-accent")}
-        >
-          {isRenaming ? (
-            <div className="flex items-center gap-1.5 px-2 py-1.5">
-              <Folder
-                className="size-3.5 shrink-0 text-muted-foreground"
-                aria-hidden
-              />
-              <Input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onBlur={commitRename}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") commitRename();
-                  if (event.key === "Escape") setIsRenaming(false);
-                }}
-                autoFocus
-                aria-label="Rename folder"
-                className="h-6 flex-1 px-1 text-sm"
-              />
-            </div>
-          ) : (
-            <CollapsibleTrigger asChild>
-              <button
-                type="button"
-                className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left"
-              >
-                <ChevronRight
-                  className="size-3.5 shrink-0 text-muted-foreground transition-standard group-data-[state=open]:rotate-90"
-                  aria-hidden
-                />
-                <Folder
-                  className={cn(
-                    "size-3.5 shrink-0",
-                    !folder.color && "text-muted-foreground",
-                  )}
-                  style={folder.color ? { color: folder.color } : undefined}
-                  aria-hidden
-                />
-                <span className="flex-1 truncate text-sm">{folder.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {sessions.length}
-                </span>
-              </button>
-            </CollapsibleTrigger>
-          )}
-        </div>
-      </ContextMenu>
-      <CollapsibleContent>
-        <div className="flex flex-col gap-0.5 pl-3">
-          {sessions.length === 0 && (
-            <p className="px-2 py-1 text-xs text-muted-foreground/70">
-              Drop chats here
-            </p>
-          )}
-          {sessions.map((session) => (
-            <SessionRow key={session.id} {...rowProps(session)} />
-          ))}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-interface WorkspaceSectionProps {
-  rowProps: RowPropsFactory;
-  onRequestDeleteFolder: (folder: ChatFolder) => void;
-}
-
-function WorkspaceSection({
-  rowProps,
-  onRequestDeleteFolder,
-}: WorkspaceSectionProps) {
-  const folders = useSessionStore((s) => s.folders);
-  const sessions = useSessionStore((s) => s.sessions);
-  const createFolder = useSessionStore((s) => s.createFolder);
-  const [isCreating, setIsCreating] = useState(false);
-  const [draft, setDraft] = useState("");
-
-  const commitCreate = () => {
-    setIsCreating(false);
-    const name = draft.trim();
-    setDraft("");
-    if (name) void createFolder(name);
-  };
-
-  return (
-    <Collapsible defaultOpen className="px-2 pt-2">
-      <div className="flex items-center justify-between">
-        <CollapsibleTrigger className="group flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium text-muted-foreground">
-          <ChevronRight
-            className="size-3 transition-standard group-data-[state=open]:rotate-90"
-            aria-hidden
-          />
-          Workspace
-        </CollapsibleTrigger>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label="New folder"
-              onClick={() => {
-                setDraft("");
-                setIsCreating(true);
-              }}
-              className="flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-            >
-              <Plus className="size-3.5" aria-hidden />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>New folder</TooltipContent>
-        </Tooltip>
-      </div>
-      <CollapsibleContent>
-        <div className="flex flex-col gap-0.5 pt-0.5">
-          {folders.length === 0 && !isCreating && (
-            <p className="px-2 py-1 text-xs text-muted-foreground/70">
-              Organize chats into folders
-            </p>
-          )}
-          {isCreating && (
-            <div className="flex items-center gap-1.5 px-2 py-1">
-              <Folder
-                className="size-3.5 shrink-0 text-muted-foreground"
-                aria-hidden
-              />
-              <Input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onBlur={commitCreate}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") commitCreate();
-                  if (event.key === "Escape") {
-                    setDraft("");
-                    setIsCreating(false);
-                  }
-                }}
-                autoFocus
-                placeholder="Folder name"
-                aria-label="Folder name"
-                className="h-6 flex-1 px-1 text-sm"
-              />
-            </div>
-          )}
-          {folders.map((folder) => (
-            <FolderItem
-              key={folder.id}
-              folder={folder}
-              sessions={sessions.filter((s) => s.folderId === folder.id)}
-              rowProps={rowProps}
-              onRequestDelete={() => onRequestDeleteFolder(folder)}
-            />
-          ))}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function ChatsSection({
-  groups,
-  rowProps,
+function TodoStatusIcon({
+  item,
+  active,
 }: {
-  groups: Array<[DateGroup, ChatSession[]]>;
-  rowProps: RowPropsFactory;
+  item: TodoItem;
+  active: boolean;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: CHATS_ROOT_ID });
-
+  if (item.status === "working" || active) {
+    return <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />;
+  }
   return (
-    <div className="px-2 pt-2">
-      <p className="px-2 text-xs font-medium text-muted-foreground">Chats</p>
-      <div
-        ref={setNodeRef}
-        className={cn(
-          "mt-1 flex min-h-8 flex-col gap-0.5 rounded-md transition-colors",
-          isOver && "bg-accent",
-        )}
-      >
-        {groups.map(([group, sessions]) => (
-          <div key={group}>
-            <p className="px-2 pb-0.5 pt-1.5 text-xs text-muted-foreground">
-              {group}
-            </p>
-            <div className="flex flex-col gap-0.5">
-              {sessions.map((session) => (
-                <SessionRow key={session.id} {...rowProps(session)} />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    <Circle
+      className={cn(
+        "size-3 shrink-0",
+        item.status === "blocked" || item.status === "error"
+          ? "fill-destructive text-destructive"
+          : "text-muted-foreground",
+      )}
+    />
   );
 }
 
 function CollapsedRail() {
-  const createSession = useSessionStore((s) => s.createSession);
+  const createTerminal = useTerminalStore((s) => s.createTerminal);
+  const setViewMode = useUiStore((s) => s.setViewMode);
+  const viewMode = useUiStore((s) => s.viewMode);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const sidebarPosition = useSettingsStore(
+    (s) => s.settings.appearance.sidebarPosition,
+  );
+  const ExpandIcon =
+    sidebarPosition === "left" ? ChevronRight : ChevronLeft;
+
+  const handleNewTerminal = () => {
+    setViewMode("code");
+    void createTerminal();
+  };
 
   return (
     <div className="flex h-full flex-col items-center gap-1 py-2">
-      <TipButton label="New chat" onClick={() => void createSession()}>
+      <TipButton label="Expand sidebar" onClick={toggleSidebar}>
+        <ExpandIcon className="size-4" aria-hidden />
+      </TipButton>
+      <div className="my-1 h-px w-6 bg-border" />
+      <TipButton label="New terminal" onClick={handleNewTerminal}>
         <Plus className="size-4" aria-hidden />
       </TipButton>
-      <TipButton label="Expand sidebar" onClick={toggleSidebar}>
-        <MessageSquare className="size-4" aria-hidden />
+      <TipButton
+        label="Code"
+        onClick={() => setViewMode("code")}
+        active={viewMode === "code"}
+      >
+        <Terminal className="size-4" aria-hidden />
+      </TipButton>
+      <TipButton
+        label="Todo"
+        onClick={() => setViewMode("todo")}
+        active={viewMode === "todo"}
+      >
+        <ListTodo className="size-4" aria-hidden />
       </TipButton>
       <div className="flex-1" />
       <UpdateButton collapsed />
@@ -895,150 +140,299 @@ function CollapsedRail() {
 }
 
 function ExpandedSidebar() {
-  const sessions = useSessionStore((s) => s.sessions);
-  const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const createSession = useSessionStore((s) => s.createSession);
-  const renameSession = useSessionStore((s) => s.renameSession);
-  const deleteSession = useSessionStore((s) => s.deleteSession);
-  const deleteFolder = useSessionStore((s) => s.deleteFolder);
-  const folders = useSessionStore((s) => s.folders);
-  const sidebarSearch = useUiStore((s) => s.sidebarSearch);
-  const setSidebarSearch = useUiStore((s) => s.setSidebarSearch);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
+  const terminals = useTerminalStore((s) => s.terminals);
+  const activeTerminalId = useTerminalStore((s) => s.activeTerminalId);
+  const createTerminal = useTerminalStore((s) => s.createTerminal);
+  const closeTerminal = useTerminalStore((s) => s.closeTerminal);
+  const setActiveTerminal = useTerminalStore((s) => s.setActiveTerminal);
+  const renameTerminal = useTerminalStore((s) => s.renameTerminal);
+  const terminalColors = useTerminalStore((s) => s.terminalColors);
+  const setTerminalColor = useTerminalStore((s) => s.setTerminalColor);
+  const items = useTodoStore((s) => s.items);
+  const runnerActive = useTodoStore((s) => s.runnerActive);
+  const activeTodoId = useTodoStore((s) => s.activeTodoId);
+  const setViewMode = useUiStore((s) => s.setViewMode);
+  const viewMode = useUiStore((s) => s.viewMode);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const sidebarPosition = useSettingsStore(
+    (s) => s.settings.appearance.sidebarPosition,
+  );
+  const CollapseIcon =
+    sidebarPosition === "left" ? ChevronLeft : ChevronRight;
+  const [editingTerminalId, setEditingTerminalId] = useState<string | null>(
     null,
   );
+  const [terminalName, setTerminalName] = useState("");
+  const cancelTerminalRename = useRef(false);
 
-  const query = sidebarSearch.trim().toLowerCase();
-  const filtered = useMemo(
-    () =>
-      query
-        ? sessions.filter((s) => s.title.toLowerCase().includes(query))
-        : sessions,
-    [sessions, query],
-  );
-  const pinned = useMemo(() => sessions.filter((s) => s.pinned), [sessions]);
-  const groups = useMemo(
-    () => groupSessionsByDate(sessions.filter((s) => !s.folderId)),
-    [sessions],
-  );
+  const openItems = items.filter((item) => item.status !== "done");
+  const queuedCount = items.filter((item) => item.status === "queued").length;
+  const doneCount = items.filter((item) => item.status === "done").length;
 
-  const rowProps: RowPropsFactory = (session) => ({
-    session,
-    isActive: session.id === activeSessionId,
-    isEditing: editingSessionId === session.id,
-    onStartRename: () => setEditingSessionId(session.id),
-    onCommitRename: (title) => {
-      setEditingSessionId(null);
-      const trimmed = title.trim();
-      if (trimmed && trimmed !== session.title)
-        void renameSession(session.id, trimmed);
-    },
-    onCancelRename: () => setEditingSessionId(null),
-    onRequestDelete: () =>
-      setPendingDelete({
-        type: "session",
-        id: session.id,
-        name: session.title,
-      }),
-  });
+  const handleNewTerminal = () => {
+    setViewMode("code");
+    void createTerminal();
+  };
 
-  const confirmDelete = () => {
-    if (!pendingDelete) return;
-    if (pendingDelete.type === "session") {
-      void deleteSession(pendingDelete.id);
-    } else {
-      void deleteFolder(pendingDelete.id);
+  const handleSelectTerminal = (id: string) => {
+    setActiveTerminal(id);
+    setViewMode("code");
+  };
+
+  const startRename = (id: string, title: string) => {
+    cancelTerminalRename.current = false;
+    setTerminalName(title);
+    setEditingTerminalId(id);
+  };
+
+  const commitRename = (id: string) => {
+    if (cancelTerminalRename.current) {
+      cancelTerminalRename.current = false;
+      setEditingTerminalId(null);
+      return;
     }
-    setPendingDelete(null);
+    const title = terminalName.trim();
+    if (title) renameTerminal(id, title);
+    setEditingTerminalId(null);
   };
 
   return (
     <>
-      <div className="px-2 pb-2 pt-3">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+        <span className="text-sm font-semibold">Workspace</span>
         <Button
-          className="w-full justify-start gap-2 rounded-md"
-          onClick={() => void createSession()}
+          variant="ghost"
+          size="icon"
+          aria-label="Collapse sidebar"
+          onClick={toggleSidebar}
+          className="size-7 text-muted-foreground"
         >
-          <Plus className="size-4" aria-hidden />
-          New chat
+          <CollapseIcon className="size-4" aria-hidden />
         </Button>
       </div>
-      <div className="px-2 pb-1">
-        <SearchInput
-          value={sidebarSearch}
-          onChange={setSidebarSearch}
-          placeholder="Search chats…"
-          aria-label="Search chats"
-        />
+
+      <div className="border-b border-border p-2">
+        <Button
+          className="w-full justify-start gap-2 rounded-md"
+          onClick={handleNewTerminal}
+        >
+          <Plus className="size-4" aria-hidden />
+          New terminal
+        </Button>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        {sessions.length === 0 && !query ? (
-          <EmptyState
-            icon={MessageSquare}
-            title="No chats yet"
-            description="Start a new conversation to see it here."
-            className="mt-6"
-          />
-        ) : query ? (
-          <div className="flex flex-col gap-0.5 p-2">
-            {filtered.length === 0 ? (
-              <EmptyState icon={SearchX} title="No matches" className="mt-6" />
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <section className="p-2" aria-labelledby="sidebar-terminals">
+          <div className="flex h-7 items-center justify-between px-2">
+            <h2
+              id="sidebar-terminals"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              Terminals
+            </h2>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {terminals.length}
+            </span>
+          </div>
+
+          <div className="space-y-0.5">
+            {terminals.length === 0 ? (
+              <p className="px-2 py-3 text-xs text-muted-foreground">
+                No terminals open
+              </p>
             ) : (
-              filtered.map((session) => (
-                <SessionRow key={session.id} {...rowProps(session)} />
-              ))
+              terminals.map((terminal) => {
+                const active =
+                  viewMode === "code" && terminal.id === activeTerminalId;
+                const color = terminalColors[terminal.id] ?? null;
+                return (
+                  <ContextMenu
+                    key={terminal.id}
+                    items={[
+                      {
+                        label: "Rename",
+                        icon: Pencil,
+                        onSelect: () =>
+                          startRename(terminal.id, terminal.title),
+                        separatorAfter: true,
+                      },
+                      ...TERMINAL_COLORS.map((option, index) => ({
+                        label: `Color: ${option.label}`,
+                        swatch: {
+                          color: option.swatch,
+                          selected: color === option.value,
+                        },
+                        onSelect: () =>
+                          setTerminalColor(terminal.id, option.value),
+                        separatorAfter: index === TERMINAL_COLORS.length - 1,
+                      })),
+                      {
+                        label: "Close terminal",
+                        icon: Trash2,
+                        danger: true,
+                        onSelect: () => void closeTerminal(terminal.id),
+                      },
+                    ]}
+                  >
+                    <div
+                      className={cn(
+                        "group flex min-w-0 items-center rounded-md ring-1 ring-inset",
+                        active
+                          ? "bg-accent text-accent-foreground ring-border"
+                          : "ring-transparent hover:bg-accent/60",
+                      )}
+                    >
+                      {editingTerminalId === terminal.id ? (
+                        <form
+                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            commitRename(terminal.id);
+                          }}
+                        >
+                          <span
+                            className="size-2 shrink-0 rounded-full bg-muted-foreground"
+                            style={
+                              color ? { backgroundColor: color } : undefined
+                            }
+                            aria-hidden
+                          />
+                          <Input
+                            value={terminalName}
+                            onChange={(event) =>
+                              setTerminalName(event.target.value)
+                            }
+                            onBlur={() => commitRename(terminal.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                cancelTerminalRename.current = true;
+                                setEditingTerminalId(null);
+                              }
+                            }}
+                            aria-label="Terminal name"
+                            className="h-7 min-w-0 flex-1 px-2 text-sm"
+                            autoFocus
+                          />
+                        </form>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleSelectTerminal(terminal.id)}
+                          onDoubleClick={() =>
+                            startRename(terminal.id, terminal.title)
+                          }
+                          aria-current={active ? "page" : undefined}
+                          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <Terminal
+                            className={cn(
+                              "size-3.5 shrink-0",
+                              !color &&
+                                (active
+                                  ? "text-foreground"
+                                  : "text-muted-foreground"),
+                            )}
+                            style={color ? { color } : undefined}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className="block truncate text-sm leading-4"
+                              title={terminal.title}
+                            >
+                              {terminal.title}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] leading-4 text-muted-foreground">
+                              {terminal.shell}
+                            </span>
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </ContextMenu>
+                );
+              })
             )}
           </div>
-        ) : (
-          <div className="flex flex-col gap-0.5 pb-2">
-            {pinned.length > 0 && (
-              <div className="px-2 pt-1">
-                <p className="px-2 text-xs font-medium text-muted-foreground">
-                  Pinned
-                </p>
-                <div className="mt-1 flex flex-col gap-0.5">
-                  {pinned.map((session) => (
-                    <SessionRow key={session.id} {...rowProps(session)} />
-                  ))}
-                </div>
+        </section>
+
+        <section
+          className="border-t border-border p-2"
+          aria-labelledby="sidebar-todo"
+        >
+          <button
+            type="button"
+            onClick={() => setViewMode("todo")}
+            aria-current={viewMode === "todo" ? "page" : undefined}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left outline-none ring-1 ring-inset ring-transparent hover:bg-accent/60 focus-visible:ring-ring",
+              viewMode === "todo" &&
+                "bg-accent text-accent-foreground ring-border",
+            )}
+          >
+            <ListTodo className="size-4 shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span
+                id="sidebar-todo"
+                className="block text-sm font-medium leading-4"
+              >
+                Todo
+              </span>
+              <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
+                {items.length === 0
+                  ? "No tasks"
+                  : `${queuedCount} queued / ${doneCount} done`}
+              </span>
+            </span>
+            {runnerActive && (
+              <Loader2
+                className="size-3.5 shrink-0 animate-spin text-primary"
+                aria-label="Todo running"
+              />
+            )}
+          </button>
+
+          <div className="mt-1 space-y-0.5">
+            {openItems.slice(0, 4).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setViewMode("todo")}
+                aria-label={`Open Todo: ${item.text}`}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <TodoStatusIcon
+                  item={item}
+                  active={runnerActive && item.id === activeTodoId}
+                />
+                <span className="truncate" title={item.text}>
+                  {item.text}
+                </span>
+              </button>
+            ))}
+            {openItems.length === 0 && items.length > 0 && (
+              <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                <CheckCircle2 className="size-3.5" aria-hidden />
+                All tasks finished
               </div>
             )}
-            <WorkspaceSection
-              rowProps={rowProps}
-              onRequestDeleteFolder={(folder) =>
-                setPendingDelete({
-                  type: "folder",
-                  id: folder.id,
-                  name: folder.name,
-                })
-              }
-            />
-            <ChatsSection groups={groups} rowProps={rowProps} />
+            {openItems.length > 4 && (
+              <button
+                type="button"
+                onClick={() => setViewMode("todo")}
+                className="w-full rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {openItems.length - 4} more tasks
+              </button>
+            )}
           </div>
-        )}
-      </ScrollArea>
-      <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
+        </section>
+      </div>
+
+      <div className="flex shrink-0 flex-col gap-1 border-t border-border p-2">
         <UpdateButton />
         <CommandCenterButton />
       </div>
-      <ConfirmDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-        title={
-          pendingDelete?.type === "folder" ? "Delete folder?" : "Delete chat?"
-        }
-        description={
-          pendingDelete?.type === "folder"
-            ? `“${pendingDelete?.name}” will be deleted. Chats inside will be moved back to the main list.`
-            : `“${pendingDelete?.name}” will be permanently deleted.`
-        }
-        danger
-        confirmLabel="Delete"
-        onConfirm={confirmDelete}
-      />
     </>
   );
 }
@@ -1047,15 +441,11 @@ export function Sidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const width = useUiStore((s) => s.sidebarWidth);
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
-  const moveToFolder = useSessionStore((s) => s.moveToFolder);
   const sidebarPosition = useSettingsStore(
     (s) => s.settings.appearance.sidebarPosition,
   );
   const [isDraggingHandle, setIsDraggingHandle] = useState(false);
   const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-  );
 
   const onHandlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1083,20 +473,6 @@ export function Sidebar() {
     }
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over) return;
-    const activeId = String(active.id);
-    const overId = String(over.id);
-    if (!activeId.startsWith("session:")) return;
-    const sessionId = activeId.slice("session:".length);
-    if (overId.startsWith("folder:")) {
-      void moveToFolder(sessionId, overId.slice("folder:".length));
-    } else if (overId === CHATS_ROOT_ID) {
-      void moveToFolder(sessionId, null);
-    }
-  };
-
   return (
     <aside
       className={cn(
@@ -1109,9 +485,7 @@ export function Sidebar() {
       )}
       style={collapsed ? undefined : { width }}
     >
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-        {collapsed ? <CollapsedRail /> : <ExpandedSidebar />}
-      </DndContext>
+      {collapsed ? <CollapsedRail /> : <ExpandedSidebar />}
       {!collapsed && (
         <div
           role="separator"

@@ -149,9 +149,7 @@ export const useSessionStore = create<SessionState>()(
       // sessions. Re-selecting the same session (e.g. after a background
       // reload on window focus) should not kick the user out of Todo view.
       if (session?.mode && id !== previousId) {
-        useUiStore
-          .getState()
-          .setViewMode(session.mode === "code" ? "code" : "agent");
+        useUiStore.getState().setViewMode("code");
       }
     },
 

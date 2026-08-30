@@ -151,8 +151,8 @@ export function AboutPage() {
       <div className="max-w-sm rounded-lg border border-border bg-muted/40 p-3 text-left">
         <p className="text-xs font-medium">Local & private</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Chats, settings, and memories are stored locally on this device.
-          {isTauri && " API keys are kept in the operating-system keychain."}
+          Settings and memories are stored locally on this device. Installed
+          CLIs keep their own credentials and configuration.
         </p>
       </div>
       {appInfo?.commitSha && commitUrl && (

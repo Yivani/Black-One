@@ -5,7 +5,6 @@ import {
   GripVertical,
   LayoutGrid,
   Pencil,
-  Plus,
   Rows2,
   TerminalSquare,
   X,
@@ -29,13 +28,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -72,14 +64,6 @@ function getGridConfig(count: number, layout: TerminalLayout): GridConfig {
   }
 }
 
-const SHELL_OPTIONS = [
-  { value: "default", label: "Default shell" },
-  { value: "cmd", label: "CMD" },
-  { value: "pwsh", label: "PowerShell 7" },
-  { value: "powershell", label: "Windows PowerShell" },
-  { value: "wsl", label: "WSL" },
-];
-
 const LAYOUT_OPTIONS: {
   value: TerminalLayout;
   label: string;
@@ -93,6 +77,7 @@ const LAYOUT_OPTIONS: {
 interface TerminalPaneProps {
   terminal: { id: string; title: string };
   active: boolean;
+  color?: string;
   dragHandleProps?: {
     attributes: ReturnType<typeof useSortable>["attributes"];
     listeners: ReturnType<typeof useSortable>["listeners"];
@@ -105,6 +90,7 @@ interface TerminalPaneProps {
 function TerminalPane({
   terminal,
   active,
+  color,
   dragHandleProps,
   onSelect,
   onClose,
@@ -131,6 +117,7 @@ function TerminalPane({
 
   return (
     <div
+      style={color ? { borderColor: color } : undefined}
       className={cn(
         "group flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-background",
         active ? "border-primary/50 ring-1 ring-primary/20" : "border-border",
@@ -153,7 +140,11 @@ function TerminalPane({
             />
           )}
           <TerminalSquare
-            className="size-3 shrink-0 text-muted-foreground"
+            className={cn(
+              "size-3 shrink-0",
+              color ? "text-current" : "text-muted-foreground",
+            )}
+            style={color ? { color } : undefined}
             aria-hidden
           />
           {editing ? (
@@ -279,9 +270,9 @@ export function CodeView() {
   const closeTerminal = useTerminalStore((s) => s.closeTerminal);
   const setActiveTerminal = useTerminalStore((s) => s.setActiveTerminal);
   const renameTerminal = useTerminalStore((s) => s.renameTerminal);
+  const terminalColors = useTerminalStore((s) => s.terminalColors);
   const reorderTerminals = useTerminalStore((s) => s.reorderTerminals);
   const setLayout = useTerminalStore((s) => s.setLayout);
-  const [selectedShell, setSelectedShell] = useState("default");
 
   useEffect(() => {
     if (terminals.length === 0) {
@@ -293,9 +284,6 @@ export function CodeView() {
     () => getGridConfig(terminals.length, layout),
     [terminals.length, layout],
   );
-
-  const shellForCreate =
-    selectedShell === "default" ? undefined : selectedShell;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -355,37 +343,6 @@ export function CodeView() {
               );
             })}
           </div>
-          <Select value={selectedShell} onValueChange={setSelectedShell}>
-            <SelectTrigger
-              className="h-7 w-36 text-xs"
-              aria-label="Shell for new terminal"
-            >
-              <SelectValue placeholder="Shell" />
-            </SelectTrigger>
-            <SelectContent>
-              {SHELL_OPTIONS.map((option) => (
-                <SelectItem
-                  key={option.value}
-                  value={option.value}
-                  className="text-xs"
-                >
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1 text-xs"
-            onClick={() => void createTerminal(undefined, shellForCreate)}
-          >
-            <Plus className="size-3.5" aria-hidden />
-            New terminal
-            <span className="ml-1 hidden rounded bg-muted px-1 text-[10px] text-muted-foreground sm:inline">
-              Mod+Shift+T
-            </span>
-          </Button>
         </div>
       </header>
       <DndContext
@@ -415,6 +372,7 @@ export function CodeView() {
                 key={terminal.id}
                 terminal={terminal}
                 active={terminal.id === activeId}
+                color={terminalColors[terminal.id]}
                 onSelect={() => setActiveTerminal(terminal.id)}
                 onClose={() => void closeTerminal(terminal.id)}
                 onRename={(title) => renameTerminal(terminal.id, title)}

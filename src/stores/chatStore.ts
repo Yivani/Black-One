@@ -3,7 +3,6 @@ import { immer } from "zustand/middleware/immer";
 import { toast } from "sonner";
 import type { Attachment, Message, QueuedMessage } from "@/types/chat";
 import {
-  DEMO_PROVIDER_ID,
   MAX_QUEUE_SIZE,
   STREAM_FLUSH_INTERVAL_MS,
 } from "@/lib/constants";
@@ -15,8 +14,8 @@ import {
   estimateTokens,
   generateId,
 } from "@/lib/utils";
-import { playErrorSound } from "@/hooks/useHaptics";
-import { extractAndStoreMemory, renderMemoryPrompt } from "@/lib/memory";
+import { playErrorSound, playFinishSound } from "@/hooks/useHaptics";
+import { renderMemoryPrompt, storeExplicitMemory } from "@/lib/memory";
 import {
   buildModeSystemPrompt,
   isIncompleteAgentResponse,
@@ -30,6 +29,7 @@ import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
 import { ipc, isTauri } from "@/lib/ipc";
 import {
   buildToolSystemPrompt,
+  cloneToolCall,
   executeTool,
   extractAttachedFolders,
   parseToolCalls,
@@ -156,6 +156,7 @@ export interface ChatState {
   ) => Promise<void>;
   continueAssistantTurn: (sessionId: string) => Promise<void>;
   runToolLoop: (sessionId: string) => Promise<void>;
+  approvePendingTools: (sessionId: string) => Promise<void>;
   submitToolResults: (
     sessionId: string,
     results: ToolCall[],
@@ -248,7 +249,9 @@ export const useChatStore = create<ChatState>()(
           message.toolCalls ?? parseToolCalls(message.content, message.id),
         )
         .filter((call) => call.status === "pending" && !resolved.has(call.id));
-      useToolRuntimeStore.getState().queuePending(pending);
+      const runtime = useToolRuntimeStore.getState();
+      runtime.clear();
+      runtime.queuePending(pending);
     },
 
     sendMessage: async (
@@ -310,6 +313,7 @@ export const useChatStore = create<ChatState>()(
         state.messagesBySession[sessionId] = [...history, assistantMessage];
         state.streamingSessionId = sessionId;
         state.isThinking = true;
+        delete state.toolLoopDepth[sessionId];
       });
 
       await persistence.addMessage(userMessage);
@@ -470,20 +474,12 @@ export const useChatStore = create<ChatState>()(
         }
 
         if (
-          settings.memory.autoExtractMemory &&
-          selected.provider.id !== DEMO_PROVIDER_ID &&
+          settings.memory.memoryPersistence &&
           !abort.signal.aborted &&
-          pendingContent.trim()
+          trimmed
         ) {
           const extract = async () => {
-            const memoryResult = await extractAndStoreMemory(
-              sessionId,
-              trimmed,
-              pendingContent,
-              selected.provider,
-              selected.model,
-              apiKey,
-            );
+            const memoryResult = await storeExplicitMemory(sessionId, trimmed);
             if (!memoryResult.savedCount) return;
             const memoryMessage: Message = {
               id: generateId(),
@@ -510,7 +506,7 @@ export const useChatStore = create<ChatState>()(
             .catch((error) => console.error("Memory extraction failed", error));
         }
 
-        await get().runToolLoop(sessionId);
+        if (!abort.signal.aborted) await get().runToolLoop(sessionId);
       } catch (error) {
         if (flushTimer) {
           clearTimeout(flushTimer);
@@ -693,7 +689,7 @@ export const useChatStore = create<ChatState>()(
           state.isThinking = false;
         });
         await persistence.updateMessage(finalMessage);
-        await get().runToolLoop(sessionId);
+        if (!abort.signal.aborted) await get().runToolLoop(sessionId);
       } catch (error) {
         if (flushTimer) {
           clearTimeout(flushTimer);
@@ -779,6 +775,7 @@ export const useChatStore = create<ChatState>()(
         set((state) => {
           delete state.toolLoopDepth[sessionId];
         });
+        playFinishSound();
         return;
       }
 
@@ -824,6 +821,66 @@ export const useChatStore = create<ChatState>()(
       if (executed.length > 0) {
         await get().submitToolResults(sessionId, executed, pending.length === 0);
       }
+    },
+
+    approvePendingTools: async (sessionId) => {
+      const messages = get().messagesBySession[sessionId] ?? [];
+      const resolved = new Set(
+        messages
+          .flatMap((message) =>
+            message.toolResults ??
+            (message.role === "system" ? parseToolResults(message.content) : []),
+          )
+          .map((call) => call.id),
+      );
+      const pending = messages
+        .flatMap((message) =>
+          message.toolCalls ?? parseToolCalls(message.content, message.id),
+        )
+        .filter((call) => call.status === "pending" && !resolved.has(call.id));
+      if (pending.length === 0) return;
+
+      const runtime = useToolRuntimeStore.getState();
+      const approved = pending.map(
+        (call) =>
+          runtime.approve(call.id) ??
+          cloneToolCall({ ...call, status: "approved" }),
+      );
+      const approvedIds = new Set(approved.map((call) => call.id));
+      const changed: Message[] = [];
+      const nextMessages = messages.map((message) => {
+        const calls =
+          message.toolCalls ?? parseToolCalls(message.content, message.id);
+        if (!calls.some((call) => approvedIds.has(call.id))) return message;
+        const updated = {
+          ...message,
+          toolCalls: calls.map((call) =>
+            approvedIds.has(call.id)
+              ? { ...call, status: "running" as const }
+              : call,
+          ),
+        };
+        changed.push(updated);
+        return updated;
+      });
+      set((state) => {
+        state.messagesBySession[sessionId] = nextMessages;
+      });
+      await Promise.all(changed.map((message) => persistence.updateMessage(message)));
+
+      const source = [...nextMessages]
+        .reverse()
+        .find((message) =>
+          message.toolCalls?.some((call) => approvedIds.has(call.id)),
+        );
+      const attachedFolders =
+        source?.toolWorkspace?.length
+          ? source.toolWorkspace
+          : await resolveAttachedFolders(sessionId, [], true);
+      const results = await Promise.all(
+        approved.map((call) => executeTool(call, { attachedFolders })),
+      );
+      await get().submitToolResults(sessionId, results, true);
     },
 
     submitToolResults: async (sessionId, results, shouldContinue = true) => {

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import {
   Dialog,
   DialogContent,
@@ -72,10 +73,11 @@ function Importance({ value }: { value: MemoryEntry["importance"] }) {
 }
 
 export function MemoryViewer() {
-  const { bank, loading, error, refresh, deleteAll } = useMemory();
+  const { bank, loading, error, refresh, deleteAll, deleteOne } = useMemory();
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<MemoryEntry | null>(null);
 
   const handleCopyMarkdown = async () => {
     const markdown = await persistence.getSetting("app:memory-md");
@@ -102,6 +104,20 @@ export function MemoryViewer() {
     } finally {
       setDeleting(false);
       setDeleteDialogOpen(false);
+    }
+  };
+
+  const handleDeleteOne = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await deleteOne(pendingDelete.id);
+      toast.success("Memory deleted.");
+    } catch {
+      toast.error("Failed to delete memory.");
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
     }
   };
 
@@ -208,7 +224,8 @@ export function MemoryViewer() {
                 <Heart className="mx-auto size-5 text-muted-foreground" aria-hidden />
                 <p className="mt-3 text-sm font-medium">Your memory map is empty</p>
                 <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                  Useful facts will appear here as Black One learns from your conversations.
+                  Stored memory entries will appear here. Copy the Markdown to
+                  use them with a terminal CLI.
                 </p>
               </div>
             </div>
@@ -246,7 +263,7 @@ export function MemoryViewer() {
                         {entries.map((entry) => (
                           <li key={entry.id} className="rounded-sm border bg-background p-3 transition-colors hover:border-foreground/30">
                             <p className="text-sm leading-relaxed">{entry.content}</p>
-                            <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                            <div className="mt-3 flex items-center gap-3 text-[11px] text-muted-foreground">
                               <time dateTime={new Date(entry.createdAt).toISOString()}>
                                 {new Date(entry.createdAt).toLocaleDateString(undefined, {
                                   month: "short",
@@ -254,7 +271,16 @@ export function MemoryViewer() {
                                   year: "numeric",
                                 })}
                               </time>
-                              <Importance value={entry.importance} />
+                              <span className="ml-auto"><Importance value={entry.importance} /></span>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-6 text-muted-foreground hover:text-destructive"
+                                aria-label="Delete memory"
+                                onClick={() => setPendingDelete(entry)}
+                              >
+                                <Trash2 className="size-3" aria-hidden />
+                              </Button>
                             </div>
                           </li>
                         ))}
@@ -287,6 +313,18 @@ export function MemoryViewer() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title="Delete this memory?"
+        description={pendingDelete?.content ?? "This permanently removes the selected memory."}
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => void handleDeleteOne()}
+      />
     </div>
   );
 }

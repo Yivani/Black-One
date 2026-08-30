@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { MemoryBank } from "@/lib/memory";
-import { deleteMemoryBank, loadMemoryBank } from "@/lib/memory";
+import { deleteMemoryBank, deleteMemoryEntry, loadMemoryBank } from "@/lib/memory";
 
 export interface UseMemoryResult {
   bank: MemoryBank | null;
@@ -8,6 +8,7 @@ export interface UseMemoryResult {
   error: Error | null;
   refresh: () => Promise<void>;
   deleteAll: () => Promise<void>;
+  deleteOne: (id: string) => Promise<void>;
 }
 
 export function useMemory(): UseMemoryResult {
@@ -33,9 +34,14 @@ export function useMemory(): UseMemoryResult {
     await refresh();
   }, [refresh]);
 
+  const deleteOne = useCallback(async (id: string) => {
+    await deleteMemoryEntry(id);
+    await refresh();
+  }, [refresh]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  return { bank, loading, error, refresh, deleteAll };
+  return { bank, loading, error, refresh, deleteAll, deleteOne };
 }

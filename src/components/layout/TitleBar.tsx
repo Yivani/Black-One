@@ -282,7 +282,7 @@ function AgentStatusIndicator() {
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
         <span className="relative inline-flex size-2 rounded-full bg-primary" />
       </span>
-      {streamingSessionId ? "Agent running" : `${queueLength} queued`}
+      {streamingSessionId ? "Work running" : `${queueLength} queued`}
     </span>
   );
 }

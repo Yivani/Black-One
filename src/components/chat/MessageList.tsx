@@ -19,7 +19,6 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { Logo } from "@/components/shared/Logo";
 import { useChat } from "@/hooks/useChat";
 import { useSessionStore } from "@/stores/sessionStore";
-import { useUiStore } from "@/stores/uiStore";
 import { groupChatMessages, type ChatDisplayRow } from "@/lib/chatDisplay";
 import { MESSAGE_VIRTUALIZATION_THRESHOLD } from "@/lib/constants";
 
@@ -51,7 +50,6 @@ function MessageRow({
 export function MessageList() {
   const { messages, contextMessageCount } = useChat();
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const viewMode = useUiStore((s) => s.viewMode);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const listRef = useListRef(null);
@@ -120,14 +118,10 @@ export function MessageList() {
         <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center px-8 pb-[8vh]">
           <Logo size={28} className="mb-7 text-foreground/90" />
           <h1 className="max-w-lg text-3xl font-semibold tracking-[-0.03em] text-foreground">
-            {viewMode === "agent"
-              ? "What should Agent finish?"
-              : "What should we work on?"}
+            What should we work on?
           </h1>
           <p className="mt-3 max-w-lg text-sm leading-6 text-muted-foreground">
-            {viewMode === "agent"
-              ? "Attach the project and describe the outcome. Agent will inspect, act, and verify."
-              : "Attach the project and describe the change while you work beside the terminal."}
+            Attach the project and describe the change while you work beside the terminal.
           </p>
         </div>
       </div>

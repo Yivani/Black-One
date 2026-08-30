@@ -147,12 +147,12 @@ export function DangerZone() {
           label="Uninstall Black One"
           description="Remove the app and all of its data from this device."
           buttonLabel="Uninstall"
-          warning="This clears every chat, setting, and stored credential, then closes Black One."
+          warning="This clears Black One's local data and settings, then closes the app."
           onConfirm={uninstall}
         />
         <DangerAction
           label="Delete All Data"
-          description="Erase every chat, message, folder, and setting."
+          description="Erase local settings, memory, and workspace data."
           buttonLabel="Delete All Data"
           warning="This permanently deletes all local data. There is no undo."
           onConfirm={deleteAllData}

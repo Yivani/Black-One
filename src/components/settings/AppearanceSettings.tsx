@@ -4,7 +4,6 @@ import { Monitor, Moon, Palette, PanelLeft, PanelRight, Sun } from "lucide-react
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
   TooltipContent,
@@ -374,32 +373,6 @@ export function AppearanceSettings() {
               />
             </div>
           </TooltipProvider>
-        </div>
-        <div className="flex items-center justify-between gap-4">
-          <div className="space-y-0.5">
-            <Label htmlFor="show-avatars">Show message avatars</Label>
-            <p className="text-xs text-muted-foreground">
-              Display an avatar next to each message.
-            </p>
-          </div>
-          <Switch
-            id="show-avatars"
-            checked={settings.appearance.showAvatars}
-            onCheckedChange={(showAvatars) => updateSection("appearance", { showAvatars })}
-          />
-        </div>
-        <div className="flex items-center justify-between gap-4">
-          <div className="space-y-0.5">
-            <Label htmlFor="vibe-hearts">Vibe Hearts</Label>
-            <p className="text-xs text-muted-foreground">
-              Floating hearts when you say thanks, ily, good bot, or send a heart.
-            </p>
-          </div>
-          <Switch
-            id="vibe-hearts"
-            checked={settings.appearance.vibeHearts}
-            onCheckedChange={(vibeHearts) => updateSection("appearance", { vibeHearts })}
-          />
         </div>
       </section>
     </div>

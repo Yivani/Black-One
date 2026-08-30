@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
   Brain,
@@ -38,11 +38,14 @@ import { useChatStore } from "@/stores/chatStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useUiStore } from "@/stores/uiStore";
+import {
+  getVisibleAssistantContent,
+  isStatusQuestion,
+} from "@/lib/chatDisplay";
 import { cn, formatTimestamp } from "@/lib/utils";
 import {
   parseToolCalls,
   parseToolResults,
-  stripToolCalls,
   type ToolCall,
   type ToolContext,
 } from "@/lib/tools";
@@ -140,11 +143,7 @@ function AgentActivity({
 }: AgentActivityProps) {
   const pendingCount = calls.filter((call) => call.status === "pending").length;
   const hasPending = pendingCount > 0;
-  const [open, setOpen] = useState(running || hasPending);
-
-  useEffect(() => {
-    setOpen(running || hasPending);
-  }, [running, hasPending]);
+  const [open, setOpen] = useState(false);
 
   const detail = hasPending
     ? "Approval required"
@@ -157,7 +156,7 @@ function AgentActivity({
   return (
     <Collapsible
       open={open}
-      onOpenChange={(next) => setOpen(hasPending ? true : next)}
+      onOpenChange={setOpen}
       className={cn(
         "mb-3 overflow-hidden rounded-md border border-border/70 bg-muted/10",
         hasPending && "border-amber-500/40",
@@ -196,7 +195,7 @@ function AgentActivity({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="border-t border-border/60">
+        <div className="max-h-96 overflow-y-auto overscroll-contain border-t border-border/60">
           {reasoning.map((entry, index) => (
             <div
               key={`reasoning-${index}`}
@@ -309,13 +308,19 @@ export const MessageBubble = memo(function MessageBubble({
     );
     return toolCalls.map((call) => results.get(call.id) ?? call);
   }, [sessionMessages, toolCalls]);
+  const statusAsked = useMemo(() => {
+    const turnStartedAt = activityMessages[0]?.createdAt ?? message.createdAt;
+    const prompt = [...sessionMessages]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.role === "user" && entry.createdAt < turnStartedAt,
+      );
+    return isStatusQuestion(prompt?.content ?? "");
+  }, [activityMessages, message.createdAt, sessionMessages]);
   const displayContent = useMemo(
-    () =>
-      toolCalls.some((call) => call.id.startsWith(message.id)) ||
-      /<tool(?:\s|>)/i.test(message.content)
-        ? ""
-        : stripToolCalls(message.content),
-    [message.content, message.id, toolCalls],
+    () => getVisibleAssistantContent(message, statusAsked),
+    [message, statusAsked],
   );
   const activityRunning =
     message.status === "streaming" ||

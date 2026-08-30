@@ -7,11 +7,6 @@ import { RightPanel } from "@/components/layout/RightPanel";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TitleBar } from "@/components/layout/TitleBar";
 
-const AgentView = lazy(() =>
-  import("@/components/views/AgentView").then((module) => ({
-    default: module.AgentView,
-  })),
-);
 const CodeView = lazy(() =>
   import("@/components/views/CodeView").then((module) => ({
     default: module.CodeView,
@@ -35,12 +30,6 @@ function ViewFallback() {
 function MainContent() {
   const viewMode = useUiStore((s) => s.viewMode);
   switch (viewMode) {
-    case "agent":
-      return (
-        <Suspense fallback={<ViewFallback />}>
-          <AgentView key="agent-view" />
-        </Suspense>
-      );
     case "code":
       return (
         <Suspense fallback={<ViewFallback />}>
