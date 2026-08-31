@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { Copy, ClipboardPaste } from "lucide-react";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import "@xterm/xterm/css/xterm.css";
 import { ipc, isTauri } from "@/lib/ipc";
 import { subscribeTerminalEvents } from "@/lib/terminalChannel";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { ContextMenu, type ContextMenuEntry } from "@/components/shared/ContextMenu";
 
 interface TerminalProps {
   terminalId: string;
@@ -18,6 +21,39 @@ function base64ToBytes(base64: string): Uint8Array {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
+}
+
+function isMac(): boolean {
+  return navigator.platform.toLowerCase().includes("mac");
+}
+
+function isPasteShortcut(event: KeyboardEvent | React.KeyboardEvent): boolean {
+  if (isMac()) {
+    return (
+      event.metaKey &&
+      event.key === "v" &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey
+    );
+  }
+  // Accept both standard Ctrl+V and terminal-style Ctrl+Shift+V.
+  return event.ctrlKey && event.key === "v" && !event.altKey && !event.metaKey;
+}
+
+function isCopyShortcut(event: KeyboardEvent | React.KeyboardEvent): boolean {
+  if (isMac()) {
+    return (
+      event.metaKey &&
+      event.key === "c" &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey
+    );
+  }
+  // Accept both standard Ctrl+C and terminal-style Ctrl+Shift+C.
+  // Note: this overrides sending SIGINT to the running process.
+  return event.ctrlKey && event.key === "c" && !event.altKey && !event.metaKey;
 }
 
 function waitForSize(element: HTMLElement): Promise<{ width: number; height: number }> {
@@ -62,6 +98,7 @@ export function Terminal({ terminalId, active }: TerminalProps) {
 
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
+    let handleKeyDown: ((event: KeyboardEvent) => void) | undefined;
 
     void (async () => {
       // Wait until the container has a real size before opening xterm.js.
@@ -104,6 +141,38 @@ export function Terminal({ terminalId, active }: TerminalProps) {
       terminal.loadAddon(fitAddon);
       terminal.open(container);
 
+      // xterm.js relies on the browser paste event, which is restricted inside
+      // the Tauri webview. Intercept copy/paste shortcuts and route them through
+      // Tauri's clipboard manager so text copied outside the app can be pasted
+      // into the terminal and terminal selections can be copied out.
+      handleKeyDown = async (event: KeyboardEvent) => {
+        if (isPasteShortcut(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            const text = await readText();
+            if (text) terminal.paste(text);
+          } catch (error) {
+            console.error("Failed to paste from clipboard", error);
+          }
+          return;
+        }
+
+        if (isCopyShortcut(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+          const selection = terminal.getSelection();
+          if (!selection) return;
+          try {
+            await writeText(selection);
+          } catch (error) {
+            console.error("Failed to copy to clipboard", error);
+          }
+          return;
+        }
+      };
+      container.addEventListener("keydown", handleKeyDown, true);
+
       terminal.onData((data) => {
         void ipc.writeTerminal(terminalId, data);
       });
@@ -117,7 +186,14 @@ export function Terminal({ terminalId, active }: TerminalProps) {
         (event) => {
           try {
             const bytes = base64ToBytes(event.data);
+            // Only auto-scroll if the user is already at the bottom; otherwise
+            // preserve their scrollback position.
+            const wasAtBottom =
+              terminal.buffer.active.viewportY === terminal.buffer.active.baseY;
             terminal.write(bytes);
+            if (wasAtBottom) {
+              terminal.scrollToBottom();
+            }
           } catch {
             terminal.write(event.data);
           }
@@ -164,6 +240,7 @@ export function Terminal({ terminalId, active }: TerminalProps) {
 
     return () => {
       disposed = true;
+      if (handleKeyDown) container.removeEventListener("keydown", handleKeyDown, true);
       resizeObserverRef.current?.disconnect();
       unsubscribe?.();
       terminalRef.current?.dispose();
@@ -191,25 +268,66 @@ export function Terminal({ terminalId, active }: TerminalProps) {
       }
       if (active) {
         terminal.focus();
+        terminal.scrollToBottom();
       }
     });
   }, [active, terminalId]);
 
+  const pasteFromClipboard = async () => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    try {
+      const text = await readText();
+      if (text) terminal.paste(text);
+    } catch (error) {
+      console.error("Failed to paste from clipboard", error);
+    }
+  };
+
+  const copyToClipboard = async () => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const selection = terminal.getSelection();
+    if (!selection) return;
+    try {
+      await writeText(selection);
+    } catch (error) {
+      console.error("Failed to copy to clipboard", error);
+    }
+  };
+
+  const contextMenuItems: ContextMenuEntry[] = [
+    {
+      label: "Copy",
+      icon: Copy,
+      shortcut: isMac() ? "⌘C" : "Ctrl+C",
+      onSelect: () => void copyToClipboard(),
+    },
+    {
+      label: "Paste",
+      icon: ClipboardPaste,
+      shortcut: isMac() ? "⌘V" : "Ctrl+V",
+      onSelect: () => void pasteFromClipboard(),
+    },
+  ];
+
   return (
-    <div
-      ref={containerRef}
-      tabIndex={0}
-      role="application"
-      aria-label="Terminal"
-      className="h-full w-full outline-none"
-      onClick={() => {
-        setActiveTerminal(terminalId);
-        terminalRef.current?.focus();
-      }}
-      onFocus={() => {
-        setActiveTerminal(terminalId);
-        terminalRef.current?.focus();
-      }}
-    />
+    <ContextMenu items={contextMenuItems}>
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        role="application"
+        aria-label="Terminal"
+        className="h-full w-full outline-none"
+        onClick={() => {
+          setActiveTerminal(terminalId);
+          terminalRef.current?.focus();
+        }}
+        onFocus={() => {
+          setActiveTerminal(terminalId);
+          terminalRef.current?.focus();
+        }}
+      />
+    </ContextMenu>
   );
 }
