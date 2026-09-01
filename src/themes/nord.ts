@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Nord theme preset for Black One.
@@ -18,7 +18,7 @@ export const nordTheme: ThemePreset = {
     "--card-foreground": "220 16% 22%",
     "--popover": "220 16% 99%",
     "--popover-foreground": "220 16% 22%",
-    "--primary": "213 32% 52%",
+    "--primary": "213 32% 45.5%",
     "--primary-foreground": "220 16% 96%",
     "--secondary": "220 16% 91%",
     "--secondary-foreground": "220 16% 22%",
@@ -26,10 +26,10 @@ export const nordTheme: ThemePreset = {
     "--muted-foreground": "220 10% 42%",
     "--accent": "193 43% 67%",
     "--accent-foreground": "220 16% 22%",
-    "--destructive": "354 42% 56%",
+    "--destructive": "354 42% 50.5%",
     "--destructive-foreground": "220 16% 96%",
     "--border": "220 16% 86%",
-    "--input": "220 16% 89%",
+    "--input": "220 16% 84.5%",
     "--ring": "213 32% 52%",
   },
   dark: {
@@ -44,13 +44,13 @@ export const nordTheme: ThemePreset = {
     "--secondary": "222 16% 22%",
     "--secondary-foreground": "219 28% 88%",
     "--muted": "222 14% 20%",
-    "--muted-foreground": "220 13% 58%",
+    "--muted-foreground": "220 13% 62%",
     "--accent": "179 25% 65%",
     "--accent-foreground": "222 16% 18%",
-    "--destructive": "354 42% 56%",
+    "--destructive": "354 42% 44%",
     "--destructive-foreground": "219 28% 88%",
     "--border": "222 16% 26%",
-    "--input": "222 16% 24%",
+    "--input": "222 16% 26%",
     "--ring": "193 43% 67%",
   },
 };

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Monitor, Moon, Palette, PanelLeft, PanelRight, Sun } from "lucide-react";
+import { ChevronDown, Monitor, Moon, Palette, PanelLeft, PanelRight, Sun } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -11,33 +12,43 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSettings } from "@/hooks/useSettings";
+import { useTranslation } from "@/hooks/useTranslation";
 import { useResolvedDark } from "@/hooks/useTheme";
 import { ACCENT_COLORS } from "@/lib/constants";
 import { THEME_PRESETS, type ThemePreset } from "@/lib/themes";
 import { cn, hexToHsl } from "@/lib/utils";
 import { useUiStore } from "@/stores/uiStore";
+import type { TranslationKey } from "@/locales";
 import type { FontSize, SidebarPosition, ThemeMode } from "@/types/settings";
 
-const THEME_OPTIONS: Array<{ id: ThemeMode; label: string; icon: LucideIcon }> = [
-  { id: "light", label: "Light", icon: Sun },
-  { id: "dark", label: "Dark", icon: Moon },
-  { id: "system", label: "System", icon: Monitor },
+/**
+ * Themes shown before the list has to be asked for.
+ *
+ * Twenty-one swatch cards is a wall; six is a choice. The rest are one click
+ * away, and the page the user is already on is never cut off — see below.
+ */
+const THEMES_PER_PAGE = 6;
+
+const THEME_OPTIONS: Array<{ id: ThemeMode; labelKey: TranslationKey; icon: LucideIcon }> = [
+  { id: "light", labelKey: "appearance.themeLight", icon: Sun },
+  { id: "dark", labelKey: "appearance.themeDark", icon: Moon },
+  { id: "system", labelKey: "appearance.themeSystem", icon: Monitor },
 ];
 
-const FONT_SIZE_OPTIONS: Array<{ id: FontSize; label: string; glyphClass: string }> = [
-  { id: "small", label: "Small", glyphClass: "text-xs" },
-  { id: "medium", label: "Medium", glyphClass: "text-sm" },
-  { id: "large", label: "Large", glyphClass: "text-base" },
+const FONT_SIZE_OPTIONS: Array<{ id: FontSize; labelKey: TranslationKey; glyphClass: string }> = [
+  { id: "small", labelKey: "appearance.fontSmall", glyphClass: "text-xs" },
+  { id: "medium", labelKey: "appearance.fontMedium", glyphClass: "text-sm" },
+  { id: "large", labelKey: "appearance.fontLarge", glyphClass: "text-base" },
 ];
 
-const SIDEBAR_OPTIONS: Array<{ id: SidebarPosition; label: string; icon: LucideIcon }> = [
-  { id: "left", label: "Left", icon: PanelLeft },
-  { id: "right", label: "Right", icon: PanelRight },
+const SIDEBAR_OPTIONS: Array<{ id: SidebarPosition; labelKey: TranslationKey; icon: LucideIcon }> = [
+  { id: "left", labelKey: "appearance.left", icon: PanelLeft },
+  { id: "right", labelKey: "appearance.right", icon: PanelRight },
 ];
 
-const PANEL_OPTIONS: Array<{ id: SidebarPosition; label: string; icon: LucideIcon }> = [
-  { id: "left", label: "Left", icon: PanelLeft },
-  { id: "right", label: "Right", icon: PanelRight },
+const PANEL_OPTIONS: Array<{ id: SidebarPosition; labelKey: TranslationKey; icon: LucideIcon }> = [
+  { id: "left", labelKey: "appearance.left", icon: PanelLeft },
+  { id: "right", labelKey: "appearance.right", icon: PanelRight },
 ];
 
 function isLightHex(hex: string): boolean {
@@ -58,6 +69,7 @@ function CustomAccentButton({
   value?: string;
   onChange: (hex: string) => void;
 }) {
+  const { t } = useTranslation();
   const [text, setText] = useState(value ?? "#6366f1");
   const isValid = useMemo(() => hexToHsl(text) !== null, [text]);
   const displayColor = isValid ? text : "#6366f1";
@@ -70,7 +82,7 @@ function CustomAccentButton({
           type="button"
           role="radio"
           aria-checked={selected}
-          aria-label="Custom accent"
+          aria-label={t("appearance.custom")}
           onClick={() => onChange(text)}
           style={{ backgroundColor: displayColor }}
           className={cn(
@@ -98,7 +110,7 @@ function CustomAccentButton({
           />
         </button>
       </TooltipTrigger>
-      <TooltipContent>Custom</TooltipContent>
+      <TooltipContent>{t("appearance.custom")}</TooltipContent>
     </Tooltip>
   );
 }
@@ -159,10 +171,25 @@ function ThemePreview({ preset, dark }: { preset: ThemePreset; dark: boolean }) 
 }
 
 export function AppearanceSettings() {
+  const { t } = useTranslation();
   const { settings, updateSection } = useSettings();
   const dark = useResolvedDark();
   const setSidebarPosition = useUiStore((s) => s.setSidebarPosition);
   const setRightPanelPosition = useUiStore((s) => s.setRightPanelPosition);
+
+  // Collapsed far enough to show the theme in use. Opening this panel and not
+  // finding your own theme would read as it having been lost.
+  const collapsedThemes = useMemo(() => {
+    const selected = THEME_PRESETS.findIndex(
+      (preset) => preset.id === settings.appearance.themePreset,
+    );
+    const pages = Math.ceil((Math.max(selected, 0) + 1) / THEMES_PER_PAGE);
+    return Math.min(pages * THEMES_PER_PAGE, THEME_PRESETS.length);
+  }, [settings.appearance.themePreset]);
+  const [visibleThemes, setVisibleThemes] = useState(collapsedThemes);
+
+  const shownThemes = THEME_PRESETS.slice(0, visibleThemes);
+  const hiddenThemes = THEME_PRESETS.length - shownThemes.length;
 
   const handleSidebarPosition = (position: SidebarPosition) => {
     updateSection("appearance", { sidebarPosition: position });
@@ -177,9 +204,9 @@ export function AppearanceSettings() {
   return (
     <div className="space-y-6">
       <section className="space-y-2">
-        <p className="text-sm font-medium leading-none">Theme</p>
-        <div role="radiogroup" aria-label="Theme" className="grid grid-cols-3 gap-2">
-          {THEME_OPTIONS.map(({ id, label, icon: Icon }) => {
+        <p className="text-sm font-medium leading-none">{t("appearance.theme")}</p>
+        <div role="radiogroup" aria-label={t("appearance.theme")} className="grid grid-cols-3 gap-2">
+          {THEME_OPTIONS.map(({ id, labelKey, icon: Icon }) => {
             const selected = settings.appearance.theme === id;
             return (
               <button
@@ -194,7 +221,7 @@ export function AppearanceSettings() {
                 )}
               >
                 <Icon className="size-5 text-muted-foreground" aria-hidden />
-                <span className="text-xs font-medium">{label}</span>
+                <span className="text-xs font-medium">{t(labelKey)}</span>
               </button>
             );
           })}
@@ -202,13 +229,13 @@ export function AppearanceSettings() {
       </section>
       <Separator />
       <section className="space-y-2">
-        <p className="text-sm font-medium leading-none">Color theme</p>
+        <p className="text-sm font-medium leading-none">{t("appearance.colorTheme")}</p>
         <div
           role="radiogroup"
-          aria-label="Color theme"
+          aria-label={t("appearance.colorTheme")}
           className="grid grid-cols-1 gap-2 sm:grid-cols-3"
         >
-          {THEME_PRESETS.map((preset) => {
+          {shownThemes.map((preset) => {
             const selected = settings.appearance.themePreset === preset.id;
             return (
               <button
@@ -240,14 +267,41 @@ export function AppearanceSettings() {
             );
           })}
         </div>
+        {hiddenThemes > 0 ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-full text-xs"
+            onClick={() =>
+              setVisibleThemes((count) => count + THEMES_PER_PAGE)
+            }
+          >
+            <ChevronDown className="mr-1 size-3.5" aria-hidden />
+            {t("appearance.showMoreThemes", {
+              count: Math.min(hiddenThemes, THEMES_PER_PAGE),
+            })}
+          </Button>
+        ) : (
+          THEME_PRESETS.length > collapsedThemes && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-full text-xs"
+              onClick={() => setVisibleThemes(collapsedThemes)}
+            >
+              <ChevronDown className="mr-1 size-3.5 rotate-180" aria-hidden />
+              {t("appearance.showLessThemes")}
+            </Button>
+          )
+        )}
       </section>
       <Separator />
       <section className="space-y-4">
         <div className="space-y-2">
-          <p className="text-sm font-medium leading-none">Font size</p>
+          <p className="text-sm font-medium leading-none">{t("appearance.fontSize")}</p>
           <div
             role="radiogroup"
-            aria-label="Font size"
+            aria-label={t("appearance.fontSize")}
             className="inline-flex rounded-md border border-border p-0.5"
           >
             {FONT_SIZE_OPTIONS.map((option) => {
@@ -269,20 +323,20 @@ export function AppearanceSettings() {
                   <span className={cn("font-semibold leading-none", option.glyphClass)} aria-hidden>
                     aA
                   </span>
-                  <span className="text-xs">{option.label}</span>
+                  <span className="text-xs">{t(option.labelKey)}</span>
                 </button>
               );
             })}
           </div>
         </div>
         <div className="space-y-2">
-          <p className="text-sm font-medium leading-none">Sidebar position</p>
+          <p className="text-sm font-medium leading-none">{t("appearance.sidebarPosition")}</p>
           <div
             role="radiogroup"
-            aria-label="Sidebar position"
+            aria-label={t("appearance.sidebarPosition")}
             className="inline-flex rounded-md border border-border p-0.5"
           >
-            {SIDEBAR_OPTIONS.map(({ id, label, icon: Icon }) => {
+            {SIDEBAR_OPTIONS.map(({ id, labelKey, icon: Icon }) => {
               const selected = settings.appearance.sidebarPosition === id;
               return (
                 <button
@@ -299,20 +353,20 @@ export function AppearanceSettings() {
                   )}
                 >
                   <Icon className="size-3.5" aria-hidden />
-                  {label}
+                  {t(labelKey)}
                 </button>
               );
             })}
           </div>
         </div>
         <div className="space-y-2">
-          <p className="text-sm font-medium leading-none">Right panel position</p>
+          <p className="text-sm font-medium leading-none">{t("appearance.rightPanelPosition")}</p>
           <div
             role="radiogroup"
-            aria-label="Right panel position"
+            aria-label={t("appearance.rightPanelPosition")}
             className="inline-flex rounded-md border border-border p-0.5"
           >
-            {PANEL_OPTIONS.map(({ id, label, icon: Icon }) => {
+            {PANEL_OPTIONS.map(({ id, labelKey, icon: Icon }) => {
               const selected = settings.appearance.rightPanelPosition === id;
               return (
                 <button
@@ -329,7 +383,7 @@ export function AppearanceSettings() {
                   )}
                 >
                   <Icon className="size-3.5" aria-hidden />
-                  {label}
+                  {t(labelKey)}
                 </button>
               );
             })}
@@ -339,9 +393,9 @@ export function AppearanceSettings() {
       <Separator />
       <section className="space-y-4">
         <div className="space-y-3">
-          <p className="text-sm font-medium leading-none">Accent color</p>
+          <p className="text-sm font-medium leading-none">{t("appearance.accentColor")}</p>
           <TooltipProvider>
-            <div role="radiogroup" aria-label="Accent color" className="flex flex-wrap gap-2">
+            <div role="radiogroup" aria-label={t("appearance.accentColor")} className="flex flex-wrap gap-2">
               {ACCENT_COLORS.map((preset) => {
                 const selected = settings.appearance.accentColor === preset.id;
                 return (

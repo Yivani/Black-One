@@ -8,7 +8,7 @@ import type {
   ProviderAccountInfo,
   ProviderApiMode,
 } from "@/types/models";
-import { DEFAULT_PROVIDERS, DEMO_PROVIDER_ID } from "@/lib/constants";
+import { DEFAULT_PROVIDERS } from "@/lib/constants";
 import {
   fetchProviderAccountInfo,
   fetchProviderModels,
@@ -143,7 +143,12 @@ export const useModelStore = create<ModelState>()(
               ),
             };
           });
-          const custom = stored.filter((p) => !defaultIds.has(p.id));
+          // The built-in "Black One" demo provider was removed in 1.1.0. It is
+          // no longer a default, so without this it would survive as a custom
+          // provider whose type no longer streams anything.
+          const custom = stored.filter(
+            (p) => !defaultIds.has(p.id) && p.id !== "demo",
+          );
           providers = [...mergedDefaults, ...custom];
         }
       } catch {
@@ -152,8 +157,7 @@ export const useModelStore = create<ModelState>()(
       const withKeyFlags = await Promise.all(
         providers.map(async (p) => ({
           ...p,
-          hasApiKey:
-            p.type === "demo" ? false : (await readApiKey(p.id)) !== null,
+          hasApiKey: (await readApiKey(p.id)) !== null,
           models: p.models.map((model) => ({
             ...model,
             selectionId: modelSelectionId(p.id, model.id),
@@ -169,11 +173,10 @@ export const useModelStore = create<ModelState>()(
         const legacy = withKeyFlags
           .flatMap((provider) => provider.models)
           .find((model) => model.id === selected);
-        const fallback = withKeyFlags.find(
-          (provider) => provider.id === DEMO_PROVIDER_ID,
-        )?.models[0];
-        const resolved = exact ?? legacy ?? fallback;
-        if (resolved?.selectionId) state.selectedModelId = resolved.selectionId;
+        const resolved = exact ?? legacy;
+        // Nothing is selected until a provider is configured; the composer and
+        // the Command Center both render an explicit "no model" state for it.
+        state.selectedModelId = resolved?.selectionId ?? "";
       });
       const resolvedSelection = get().selectedModelId;
       useSettingsStore
@@ -198,7 +201,7 @@ export const useModelStore = create<ModelState>()(
         const providers = get().providers;
         const refreshed: Provider[] = [];
         for (const provider of providers) {
-          if (!provider.isEnabled || provider.type === "demo") {
+          if (!provider.isEnabled) {
             refreshed.push(provider);
             continue;
           }
@@ -308,7 +311,6 @@ export const useModelStore = create<ModelState>()(
     },
 
     removeProvider: async (providerId) => {
-      if (providerId === DEMO_PROVIDER_ID) return;
       set((state) => {
         state.providers = state.providers.filter((p) => p.id !== providerId);
       });
@@ -361,9 +363,7 @@ export const useModelStore = create<ModelState>()(
         );
         if (model) return { provider, model };
       }
-      const demo = providers.find((p) => p.id === DEMO_PROVIDER_ID);
-      const demoModel = demo?.models[0];
-      return demo && demoModel ? { provider: demo, model: demoModel } : null;
+      return null;
     },
 
     allModels: () => get().providers.flatMap((p) => p.models),

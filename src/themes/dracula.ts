@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Dracula theme preset for Black One.
@@ -29,8 +29,8 @@ export const draculaTheme: ThemePreset = {
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "230 20% 87%",
-    "--input": "230 20% 90%",
-    "--ring": "265 89% 78%",
+    "--input": "230 20% 86%",
+    "--ring": "265 89% 70%",
   },
   dark: {
     "--background": "231 15% 12%",
@@ -47,7 +47,7 @@ export const draculaTheme: ThemePreset = {
     "--muted-foreground": "231 10% 62%",
     "--accent": "326 100% 74%",
     "--accent-foreground": "231 15% 12%",
-    "--destructive": "0 72% 55%",
+    "--destructive": "0 72% 52.5%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "232 14% 25%",
     "--input": "232 14% 23%",

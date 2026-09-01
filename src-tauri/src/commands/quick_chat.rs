@@ -320,6 +320,11 @@ fn toggle_quick_chat(app: &AppHandle) {
     });
 }
 
+/// Opens (or closes) the quick-chat window from the system tray menu.
+pub fn toggle_from_tray(app: &AppHandle) {
+    toggle_quick_chat(app);
+}
+
 #[tauri::command]
 pub fn set_quick_chat_shortcut(
     binding: String,

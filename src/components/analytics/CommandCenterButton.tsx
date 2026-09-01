@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,13 +8,16 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CommandCenter } from "./CommandCenter";
+import { useUiStore } from "@/stores/uiStore";
 
 interface CommandCenterButtonProps {
   collapsed?: boolean;
 }
 
 export function CommandCenterButton({ collapsed }: CommandCenterButtonProps) {
-  const [open, setOpen] = useState(false);
+  // Shared state so the tray menu and command palette can open this too.
+  const open = useUiStore((s) => s.commandCenterOpen);
+  const setOpen = useUiStore((s) => s.setCommandCenterOpen);
 
   const trigger = collapsed ? (
     <Tooltip>

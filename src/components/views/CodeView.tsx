@@ -36,6 +36,11 @@ import {
 import { Terminal } from "@/components/terminal";
 import { cn } from "@/lib/utils";
 import { useTerminalStore, type TerminalLayout } from "@/stores/terminalStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import {
+  useActiveTerminalId,
+  useWorkspaceTerminals,
+} from "@/hooks/useWorkspace";
 
 interface GridConfig {
   cols: number;
@@ -75,7 +80,7 @@ const LAYOUT_OPTIONS: {
 ];
 
 interface TerminalPaneProps {
-  terminal: { id: string; title: string };
+  terminal: { id: string; title: string; exited?: boolean };
   active: boolean;
   color?: string;
   dragHandleProps?: {
@@ -189,7 +194,15 @@ function TerminalPane({
             </form>
           ) : (
             <>
-              <span className="truncate text-xs font-medium">
+              <span
+                className={cn(
+                  "truncate text-xs font-medium",
+                  // An exited tab keeps its scrollback but takes no input, so
+                  // it should not look like a shell you can still type into.
+                  terminal.exited && "text-muted-foreground line-through",
+                )}
+                title={terminal.exited ? `${terminal.title} — exited` : terminal.title}
+              >
                 {terminal.title}
               </span>
               <Button
@@ -263,8 +276,11 @@ function SortableTerminalPane({
 }
 
 export function CodeView() {
-  const terminals = useTerminalStore((s) => s.terminals);
-  const activeId = useTerminalStore((s) => s.activeTerminalId);
+  // The deck only ever shows the active workspace's terminals; another
+  // workspace's shells keep running but stay out of view.
+  const terminals = useWorkspaceTerminals();
+  const activeId = useActiveTerminalId();
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const layout = useTerminalStore((s) => s.layout);
   const createTerminal = useTerminalStore((s) => s.createTerminal);
   const closeTerminal = useTerminalStore((s) => s.closeTerminal);
@@ -274,11 +290,12 @@ export function CodeView() {
   const reorderTerminals = useTerminalStore((s) => s.reorderTerminals);
   const setLayout = useTerminalStore((s) => s.setLayout);
 
+  // Switching to a workspace that has no shell yet opens one for it.
   useEffect(() => {
     if (terminals.length === 0) {
       void createTerminal();
     }
-  }, [terminals.length, createTerminal]);
+  }, [terminals.length, createTerminal, activeWorkspaceId]);
 
   const { cols, rows } = useMemo(
     () => getGridConfig(terminals.length, layout),

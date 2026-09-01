@@ -8,6 +8,7 @@ pub mod settings;
 pub mod shell;
 pub mod system;
 pub mod terminal;
+pub mod tray;
 
 use std::sync::MutexGuard;
 

@@ -14,7 +14,7 @@ interface Handlers {
   onClosed: ClosedHandler;
 }
 
-const handlersById = new Map<string, Handlers>();
+const handlersById = new Map<string, Set<Handlers>>();
 const pendingById = new Map<string, TerminalEvent[]>();
 const MAX_PENDING_EVENTS = 64;
 
@@ -33,10 +33,12 @@ function ensureRegistered(): Promise<void> {
         event.kind === "Output" ? event.payload.id : event.payload.id;
       const handlers = handlersById.get(id);
       if (handlers) {
-        if (event.kind === "Output") {
-          handlers.onOutput(event.payload);
-        } else {
-          handlers.onClosed(event.payload);
+        for (const handler of handlers) {
+          if (event.kind === "Output") {
+            handler.onOutput(event.payload);
+          } else {
+            handler.onClosed(event.payload);
+          }
         }
         return;
       }
@@ -64,7 +66,13 @@ export function subscribeTerminalEvents(
   onOutput: OutputHandler,
   onClosed: ClosedHandler,
 ): () => void {
-  handlersById.set(id, { onOutput, onClosed });
+  let handlers = handlersById.get(id);
+  if (!handlers) {
+    handlers = new Set();
+    handlersById.set(id, handlers);
+  }
+  const entry: Handlers = { onOutput, onClosed };
+  handlers.add(entry);
 
   // Flush any events that arrived before subscription.
   const pending = pendingById.get(id);
@@ -80,8 +88,11 @@ export function subscribeTerminalEvents(
   }
 
   return () => {
-    handlersById.delete(id);
-    pendingById.delete(id);
+    handlers?.delete(entry);
+    if (handlers && handlers.size === 0) {
+      handlersById.delete(id);
+      pendingById.delete(id);
+    }
   };
 }
 

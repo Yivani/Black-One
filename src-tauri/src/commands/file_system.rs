@@ -21,8 +21,12 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
+/// Reads a text file. Refuses to read outside any of the provided roots unless
+/// `roots` is absent — reads are sandboxed exactly like writes, because a read
+/// the agent was never granted is an exfiltration path.
 #[tauri::command]
-pub fn read_file_text(path: String) -> Result<String, AppError> {
+pub fn read_file_text(path: String, roots: Option<Vec<String>>) -> Result<String, AppError> {
+    ensure_within_roots(&path, roots.as_deref())?;
     let path_ref = std::path::Path::new(&path);
     let metadata = std::fs::metadata(path_ref).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -48,8 +52,13 @@ pub fn read_file_text(path: String) -> Result<String, AppError> {
     })
 }
 
+/// Lists a directory. Sandboxed to `roots` on the same terms as `read_file_text`.
 #[tauri::command]
-pub fn read_dir_entries(path: String) -> Result<Vec<DirEntry>, AppError> {
+pub fn read_dir_entries(
+    path: String,
+    roots: Option<Vec<String>>,
+) -> Result<Vec<DirEntry>, AppError> {
+    ensure_within_roots(&path, roots.as_deref())?;
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&path)? {
         let entry = entry?;
@@ -155,6 +164,25 @@ pub async fn pick_sound_file(app: tauri::AppHandle) -> Result<Option<String>, Ap
     Ok(Some(dest.to_string_lossy().into_owned()))
 }
 
+/// Opens a folder picker and returns the selected directory path.
+/// Returns `None` if the user cancels the dialog.
+#[tauri::command]
+pub async fn pick_workspace_folder(
+    app: tauri::AppHandle,
+) -> Result<Option<String>, AppError> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let Some(folder_path) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+
+    let path = folder_path.as_path().ok_or_else(|| {
+        AppError::InvalidInput("Invalid folder path returned by dialog".to_string())
+    })?;
+
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 const MAX_MEMORY_FILE_SIZE: u64 = 1024 * 1024; // 1 MiB
 
 fn lock_memory_file() -> Result<MutexGuard<'static, ()>, AppError> {
@@ -253,13 +281,7 @@ pub fn write_file_text(
     roots: Option<Vec<String>>,
 ) -> Result<(), AppError> {
     let path_ref = std::path::Path::new(&path);
-    if let Some(roots) = roots {
-        if !roots.iter().any(|root| is_path_inside(root, &path)) {
-            return Err(AppError::InvalidInput(format!(
-                "path is outside allowed folders: {path}"
-            )));
-        }
-    }
+    ensure_within_roots(&path, roots.as_deref())?;
     if let Some(parent) = path_ref.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -269,26 +291,14 @@ pub fn write_file_text(
 /// Creates a directory and all parent directories.
 #[tauri::command]
 pub fn create_dir_command(path: String, roots: Option<Vec<String>>) -> Result<(), AppError> {
-    if let Some(roots) = roots {
-        if !roots.iter().any(|root| is_path_inside(root, &path)) {
-            return Err(AppError::InvalidInput(format!(
-                "path is outside allowed folders: {path}"
-            )));
-        }
-    }
+    ensure_within_roots(&path, roots.as_deref())?;
     std::fs::create_dir_all(&path).map_err(AppError::Io)
 }
 
 /// Deletes a file.
 #[tauri::command]
 pub fn delete_file(path: String, roots: Option<Vec<String>>) -> Result<(), AppError> {
-    if let Some(roots) = roots {
-        if !roots.iter().any(|root| is_path_inside(root, &path)) {
-            return Err(AppError::InvalidInput(format!(
-                "path is outside allowed folders: {path}"
-            )));
-        }
-    }
+    ensure_within_roots(&path, roots.as_deref())?;
     std::fs::remove_file(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             AppError::InvalidInput(format!("file does not exist: {path}"))
@@ -301,13 +311,7 @@ pub fn delete_file(path: String, roots: Option<Vec<String>>) -> Result<(), AppEr
 /// Deletes an empty directory.
 #[tauri::command]
 pub fn delete_dir(path: String, roots: Option<Vec<String>>) -> Result<(), AppError> {
-    if let Some(roots) = roots {
-        if !roots.iter().any(|root| is_path_inside(root, &path)) {
-            return Err(AppError::InvalidInput(format!(
-                "path is outside allowed folders: {path}"
-            )));
-        }
-    }
+    ensure_within_roots(&path, roots.as_deref())?;
     std::fs::remove_dir(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             AppError::InvalidInput(format!("directory does not exist: {path}"))
@@ -324,15 +328,8 @@ pub fn rename_file(
     to: String,
     roots: Option<Vec<String>>,
 ) -> Result<(), AppError> {
-    if let Some(roots) = roots {
-        if !roots.iter().any(|root| is_path_inside(root, &from))
-            || !roots.iter().any(|root| is_path_inside(root, &to))
-        {
-            return Err(AppError::InvalidInput(
-                "source or destination is outside allowed folders".to_string(),
-            ));
-        }
-    }
+    ensure_within_roots(&from, roots.as_deref())?;
+    ensure_within_roots(&to, roots.as_deref())?;
     std::fs::rename(&from, &to).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             AppError::InvalidInput(format!("source does not exist: {from}"))
@@ -340,6 +337,34 @@ pub fn rename_file(
             AppError::Io(e)
         }
     })
+}
+
+/// Shared guard for every path-taking command.
+///
+/// `None` means the caller opted out of the workspace restriction (internal
+/// callers such as attachment previews). `Some(&[])` denies everything: "no
+/// workspace configured" must never read as "any workspace".
+fn ensure_within_roots(path: &str, roots: Option<&[String]>) -> Result<(), AppError> {
+    let Some(roots) = roots else {
+        return Ok(());
+    };
+    if roots.iter().any(|root| is_path_inside(root, path)) {
+        return Ok(());
+    }
+    Err(AppError::InvalidInput(format!(
+        "path is outside allowed folders: {path}"
+    )))
+}
+
+/// Canonicalizing containment check exposed to the frontend, for callers that
+/// act on a path without going through one of the commands above (the
+/// terminal-backed shell path).
+#[tauri::command]
+pub fn path_within_roots(path: String, roots: Vec<String>) -> Result<bool, AppError> {
+    if roots.is_empty() {
+        return Ok(false);
+    }
+    Ok(roots.iter().any(|root| is_path_inside(root, &path)))
 }
 
 fn is_path_inside(root: &str, target: &str) -> bool {
@@ -387,4 +412,145 @@ pub fn delete_memory_file(app: tauri::AppHandle) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_within_roots, is_path_inside, path_within_roots};
+    use std::path::PathBuf;
+
+    /// Builds a unique `root/` + `root-backup/` + `root/nested/` fixture under
+    /// the temp dir. Canonicalization needs paths that actually exist.
+    struct Fixture {
+        root: PathBuf,
+        sibling: PathBuf,
+    }
+
+    impl Fixture {
+        fn new(tag: &str) -> Self {
+            let base = std::env::temp_dir().join(format!(
+                "black-one-sandbox-{tag}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let root = base.join("root");
+            let sibling = base.join("root-backup");
+            std::fs::create_dir_all(root.join("nested")).unwrap();
+            std::fs::create_dir_all(&sibling).unwrap();
+            std::fs::write(root.join("nested/file.txt"), "x").unwrap();
+            std::fs::write(sibling.join("secret.txt"), "x").unwrap();
+            Self { root, sibling }
+        }
+
+        fn root(&self) -> String {
+            self.root.to_string_lossy().into_owned()
+        }
+    }
+
+    #[test]
+    fn accepts_the_root_itself_and_paths_under_it() {
+        let fx = Fixture::new("inside");
+        assert!(is_path_inside(&fx.root(), &fx.root()));
+        assert!(is_path_inside(
+            &fx.root(),
+            &fx.root.join("nested").to_string_lossy()
+        ));
+        assert!(is_path_inside(
+            &fx.root(),
+            &fx.root.join("nested/file.txt").to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn rejects_traversal_out_of_the_root() {
+        let fx = Fixture::new("traversal");
+        let escaped = fx.root.join("nested/../../root-backup/secret.txt");
+        assert!(
+            !is_path_inside(&fx.root(), &escaped.to_string_lossy()),
+            "`..` must be resolved before the containment check"
+        );
+        let parent = fx.root.join("..");
+        assert!(!is_path_inside(&fx.root(), &parent.to_string_lossy()));
+    }
+
+    #[test]
+    fn rejects_a_sibling_sharing_a_name_prefix() {
+        let fx = Fixture::new("sibling");
+        assert!(
+            !is_path_inside(&fx.root(), &fx.sibling.to_string_lossy()),
+            "root-backup must not count as inside root"
+        );
+        assert!(!is_path_inside(
+            &fx.root(),
+            &fx.sibling.join("secret.txt").to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn handles_targets_that_do_not_exist_yet() {
+        let fx = Fixture::new("missing");
+        // Writes create new files, so a non-existent target inside the root
+        // must be allowed via its parent.
+        assert!(is_path_inside(
+            &fx.root(),
+            &fx.root.join("nested/new.txt").to_string_lossy()
+        ));
+        assert!(!is_path_inside(
+            &fx.root(),
+            &fx.sibling.join("new.txt").to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn rejects_an_unrelated_absolute_path() {
+        let fx = Fixture::new("unrelated");
+        let elsewhere = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(!is_path_inside(&fx.root(), &elsewhere));
+    }
+
+    #[test]
+    fn absent_roots_opt_out_but_empty_roots_deny() {
+        let fx = Fixture::new("guard");
+        let inside = fx.root.join("nested/file.txt").to_string_lossy().into_owned();
+        let outside = fx.sibling.join("secret.txt").to_string_lossy().into_owned();
+
+        assert!(ensure_within_roots(&outside, None).is_ok());
+
+        let empty: Vec<String> = Vec::new();
+        assert!(
+            ensure_within_roots(&inside, Some(&empty)).is_err(),
+            "no configured workspace must not mean every workspace"
+        );
+
+        let roots = vec![fx.root()];
+        assert!(ensure_within_roots(&inside, Some(&roots)).is_ok());
+        assert!(ensure_within_roots(&outside, Some(&roots)).is_err());
+    }
+
+    #[test]
+    fn path_within_roots_matches_the_guard() {
+        let fx = Fixture::new("command");
+        let inside = fx.root.join("nested").to_string_lossy().into_owned();
+        let escaped = fx
+            .root
+            .join("nested/../../root-backup")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(path_within_roots(inside, vec![fx.root()]).unwrap(), true);
+        assert_eq!(path_within_roots(escaped, vec![fx.root()]).unwrap(), false);
+        assert_eq!(
+            path_within_roots(fx.root(), Vec::new()).unwrap(),
+            false,
+            "an empty root list must fail closed"
+        );
+    }
+
+    #[test]
+    fn accepts_any_of_several_roots() {
+        let fx = Fixture::new("multi");
+        let roots = vec![fx.sibling.to_string_lossy().into_owned(), fx.root()];
+        let inside = fx.root.join("nested/file.txt").to_string_lossy().into_owned();
+        assert!(ensure_within_roots(&inside, Some(&roots)).is_ok());
+    }
 }

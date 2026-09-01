@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ACCENT_COLORS, FONT_SIZE_SCALE } from "@/lib/constants";
+import { readableForeground } from "@/lib/contrast";
 import { THEME_PRESETS } from "@/lib/themes";
 import { accentChannelsFromHex } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -39,6 +40,11 @@ export function useTheme(): void {
     }
     root.style.setProperty("--primary", accentChannels);
     root.style.setProperty("--ring", accentChannels);
+    // The accent replaces the preset's --primary, so the label colour the
+    // preset shipped no longer belongs to the colour underneath it. Derive it
+    // instead, and a white-on-lime button becomes impossible whatever the user
+    // picks — custom hex included.
+    root.style.setProperty("--primary-foreground", readableForeground(accentChannels));
 
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     media.addEventListener("change", applyTheme);

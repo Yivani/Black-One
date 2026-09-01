@@ -14,6 +14,13 @@ export interface TodoItem {
   pass?: number;
   blockedMessageId?: string;
   error?: string;
+  /** Terminal that should run this task's shell commands. */
+  terminalId?: string;
+  /**
+   * Workspace this task belongs to. Boards are per-workspace, so a task is
+   * only ever listed and run inside its own.
+   */
+  workspaceId?: string;
 }
 
 export type TodoToolRequirement = "none" | "read" | "change";

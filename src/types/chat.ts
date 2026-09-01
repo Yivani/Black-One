@@ -57,6 +57,12 @@ export interface Message {
   toolCalls?: ToolCall[];
   toolResults?: ToolCall[];
   toolWorkspace?: string[];
+  /**
+   * Terminal these tool calls belong to, captured when the calls were made.
+   * Approvals can arrive long afterwards, so the routing has to travel with
+   * the message rather than being read from live state at approval time.
+   */
+  toolTerminalId?: string;
 }
 
 export interface QueuedMessage {

@@ -15,8 +15,10 @@ import {
   Plus,
   Terminal,
   Trash2,
+  X,
 } from "lucide-react";
 import { CommandCenterButton } from "@/components/analytics/CommandCenterButton";
+import { MemoryIndicator } from "@/components/memory/MemoryIndicator";
 import { UpdateButton } from "@/components/analytics/UpdateButton";
 import { ContextMenu } from "@/components/shared/ContextMenu";
 import { Button } from "@/components/ui/button";
@@ -27,6 +29,25 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import {
+  CollapsedWorkspaceRail,
+  WorkspaceSwitcher,
+} from "@/components/layout/WorkspaceSwitcher";
+import {
+  SidebarEmpty,
+  SidebarIconAction,
+  SidebarSection,
+  SIDEBAR_ROW,
+  SIDEBAR_ROW_ACTIVE,
+  SIDEBAR_ROW_IDLE,
+  SIDEBAR_ROW_REVEAL,
+} from "@/components/layout/SidebarPrimitives";
+import { useTranslation } from "@/hooks/useTranslation";
+import {
+  useActiveTerminalId,
+  useWorkspaceTerminals,
+  useWorkspaceTodos,
+} from "@/hooks/useWorkspace";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useTodoStore } from "@/stores/todoStore";
@@ -94,6 +115,7 @@ function TodoStatusIcon({
 }
 
 function CollapsedRail() {
+  const { t } = useTranslation();
   const createTerminal = useTerminalStore((s) => s.createTerminal);
   const setViewMode = useUiStore((s) => s.setViewMode);
   const viewMode = useUiStore((s) => s.viewMode);
@@ -111,11 +133,13 @@ function CollapsedRail() {
 
   return (
     <div className="flex h-full flex-col items-center gap-1 py-2">
-      <TipButton label="Expand sidebar" onClick={toggleSidebar}>
+      <TipButton label={t("sidebar.expand")} onClick={toggleSidebar}>
         <ExpandIcon className="size-4" aria-hidden />
       </TipButton>
       <div className="my-1 h-px w-6 bg-border" />
-      <TipButton label="New terminal" onClick={handleNewTerminal}>
+      <CollapsedWorkspaceRail />
+      <div className="my-1 h-px w-6 bg-border" />
+      <TipButton label={t("sidebar.newTerminal")} onClick={handleNewTerminal}>
         <Plus className="size-4" aria-hidden />
       </TipButton>
       <TipButton
@@ -126,13 +150,14 @@ function CollapsedRail() {
         <Terminal className="size-4" aria-hidden />
       </TipButton>
       <TipButton
-        label="Todo"
+        label={t("sidebar.tasks")}
         onClick={() => setViewMode("todo")}
         active={viewMode === "todo"}
       >
         <ListTodo className="size-4" aria-hidden />
       </TipButton>
       <div className="flex-1" />
+      <MemoryIndicator collapsed />
       <UpdateButton collapsed />
       <CommandCenterButton collapsed />
     </div>
@@ -140,15 +165,16 @@ function CollapsedRail() {
 }
 
 function ExpandedSidebar() {
-  const terminals = useTerminalStore((s) => s.terminals);
-  const activeTerminalId = useTerminalStore((s) => s.activeTerminalId);
+  const { t } = useTranslation();
+  const terminals = useWorkspaceTerminals();
+  const activeTerminalId = useActiveTerminalId();
   const createTerminal = useTerminalStore((s) => s.createTerminal);
   const closeTerminal = useTerminalStore((s) => s.closeTerminal);
   const setActiveTerminal = useTerminalStore((s) => s.setActiveTerminal);
   const renameTerminal = useTerminalStore((s) => s.renameTerminal);
   const terminalColors = useTerminalStore((s) => s.terminalColors);
   const setTerminalColor = useTerminalStore((s) => s.setTerminalColor);
-  const items = useTodoStore((s) => s.items);
+  const items = useWorkspaceTodos();
   const runnerActive = useTodoStore((s) => s.runnerActive);
   const activeTodoId = useTodoStore((s) => s.activeTodoId);
   const setViewMode = useUiStore((s) => s.setViewMode);
@@ -166,7 +192,6 @@ function ExpandedSidebar() {
   const cancelTerminalRename = useRef(false);
 
   const openItems = items.filter((item) => item.status !== "done");
-  const queuedCount = items.filter((item) => item.status === "queued").length;
   const doneCount = items.filter((item) => item.status === "done").length;
 
   const handleNewTerminal = () => {
@@ -198,48 +223,27 @@ function ExpandedSidebar() {
 
   return (
     <>
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
-        <span className="text-sm font-semibold">Workspace</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Collapse sidebar"
-          onClick={toggleSidebar}
-          className="size-7 text-muted-foreground"
-        >
-          <CollapseIcon className="size-4" aria-hidden />
-        </Button>
-      </div>
-
-      <div className="border-b border-border p-2">
-        <Button
-          className="w-full justify-start gap-2 rounded-md"
-          onClick={handleNewTerminal}
-        >
-          <Plus className="size-4" aria-hidden />
-          New terminal
-        </Button>
-      </div>
+      <WorkspaceSwitcher
+        actions={
+          <SidebarIconAction label={t("sidebar.collapse")} onClick={toggleSidebar}>
+            <CollapseIcon className="size-4" aria-hidden />
+          </SidebarIconAction>
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <section className="p-2" aria-labelledby="sidebar-terminals">
-          <div className="flex h-7 items-center justify-between px-2">
-            <h2
-              id="sidebar-terminals"
-              className="text-xs font-medium text-muted-foreground"
-            >
-              Terminals
-            </h2>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {terminals.length}
-            </span>
-          </div>
-
-          <div className="space-y-0.5">
-            {terminals.length === 0 ? (
-              <p className="px-2 py-3 text-xs text-muted-foreground">
-                No terminals open
-              </p>
+        <SidebarSection
+          id="sidebar-terminals"
+          label={t("sidebar.terminals")}
+          count={terminals.length}
+          actions={
+            <SidebarIconAction label={t("sidebar.newTerminal")} onClick={handleNewTerminal}>
+              <Plus className="size-4" aria-hidden />
+            </SidebarIconAction>
+          }
+        >
+          {terminals.length === 0 ? (
+              <SidebarEmpty>{t("sidebar.noTerminals")}</SidebarEmpty>
             ) : (
               terminals.map((terminal) => {
                 const active =
@@ -250,7 +254,7 @@ function ExpandedSidebar() {
                     key={terminal.id}
                     items={[
                       {
-                        label: "Rename",
+                        label: t("common.edit"),
                         icon: Pencil,
                         onSelect: () =>
                           startRename(terminal.id, terminal.title),
@@ -267,7 +271,7 @@ function ExpandedSidebar() {
                         separatorAfter: index === TERMINAL_COLORS.length - 1,
                       })),
                       {
-                        label: "Close terminal",
+                        label: t("common.close"),
                         icon: Trash2,
                         danger: true,
                         onSelect: () => void closeTerminal(terminal.id),
@@ -276,25 +280,22 @@ function ExpandedSidebar() {
                   >
                     <div
                       className={cn(
-                        "group flex min-w-0 items-center rounded-md ring-1 ring-inset",
-                        active
-                          ? "bg-accent text-accent-foreground ring-border"
-                          : "ring-transparent hover:bg-accent/60",
+                        SIDEBAR_ROW,
+                        active ? SIDEBAR_ROW_ACTIVE : SIDEBAR_ROW_IDLE,
+                        "pr-1",
                       )}
                     >
                       {editingTerminalId === terminal.id ? (
                         <form
-                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2"
+                          className="flex min-w-0 flex-1 items-center gap-2"
                           onSubmit={(event) => {
                             event.preventDefault();
                             commitRename(terminal.id);
                           }}
                         >
-                          <span
-                            className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                            style={
-                              color ? { backgroundColor: color } : undefined
-                            }
+                          <Terminal
+                            className="size-3.5 shrink-0 text-muted-foreground"
+                            style={color ? { color } : undefined}
                             aria-hidden
                           />
                           <Input
@@ -309,127 +310,145 @@ function ExpandedSidebar() {
                                 setEditingTerminalId(null);
                               }
                             }}
-                            aria-label="Terminal name"
-                            className="h-7 min-w-0 flex-1 px-2 text-sm"
+                            aria-label={t("sidebar.terminals")}
+                            className="h-6 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
                             autoFocus
                           />
                         </form>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleSelectTerminal(terminal.id)}
-                          onDoubleClick={() =>
-                            startRename(terminal.id, terminal.title)
-                          }
-                          aria-current={active ? "page" : undefined}
-                          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <Terminal
-                            className={cn(
-                              "size-3.5 shrink-0",
-                              !color &&
-                                (active
-                                  ? "text-foreground"
-                                  : "text-muted-foreground"),
-                            )}
-                            style={color ? { color } : undefined}
-                            aria-hidden
-                          />
-                          <span className="min-w-0 flex-1">
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectTerminal(terminal.id)}
+                            onDoubleClick={() =>
+                              startRename(terminal.id, terminal.title)
+                            }
+                            aria-current={active ? "page" : undefined}
+                            /* The shell name lives here rather than on a second
+                               line: the title already contains it. */
+                            title={
+                              terminal.exited
+                                ? `${terminal.title} — ${terminal.shell} (exited)`
+                                : `${terminal.title} — ${terminal.shell}`
+                            }
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none"
+                          >
+                            <Terminal
+                              className={cn(
+                                "size-3.5 shrink-0",
+                                !color &&
+                                  (active
+                                    ? "text-foreground"
+                                    : "text-muted-foreground"),
+                              )}
+                              style={color ? { color } : undefined}
+                              aria-hidden
+                            />
                             <span
-                              className="block truncate text-sm leading-4"
-                              title={terminal.title}
+                              className={cn(
+                                "min-w-0 flex-1 truncate",
+                                terminal.exited && "text-muted-foreground",
+                              )}
                             >
                               {terminal.title}
                             </span>
-                            <span className="mt-0.5 block truncate text-[11px] leading-4 text-muted-foreground">
-                              {terminal.shell}
-                            </span>
-                          </span>
-                        </button>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`${t("common.close")} ${terminal.title}`}
+                            onClick={() => void closeTerminal(terminal.id)}
+                            className={cn(
+                              SIDEBAR_ROW_REVEAL,
+                              "size-5 text-muted-foreground hover:text-foreground",
+                            )}
+                          >
+                            <X className="size-3.5" aria-hidden />
+                          </Button>
+                        </>
                       )}
                     </div>
                   </ContextMenu>
                 );
               })
             )}
-          </div>
-        </section>
+        </SidebarSection>
 
-        <section
-          className="border-t border-border p-2"
-          aria-labelledby="sidebar-todo"
-        >
-          <button
-            type="button"
-            onClick={() => setViewMode("todo")}
-            aria-current={viewMode === "todo" ? "page" : undefined}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left outline-none ring-1 ring-inset ring-transparent hover:bg-accent/60 focus-visible:ring-ring",
-              viewMode === "todo" &&
-                "bg-accent text-accent-foreground ring-border",
-            )}
-          >
-            <ListTodo className="size-4 shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1">
-              <span
-                id="sidebar-todo"
-                className="block text-sm font-medium leading-4"
-              >
-                Todo
-              </span>
-              <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
-                {items.length === 0
-                  ? "No tasks"
-                  : `${queuedCount} queued / ${doneCount} done`}
-              </span>
-            </span>
-            {runnerActive && (
-              <Loader2
-                className="size-3.5 shrink-0 animate-spin text-primary"
-                aria-label="Todo running"
-              />
-            )}
-          </button>
-
-          <div className="mt-1 space-y-0.5">
-            {openItems.slice(0, 4).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setViewMode("todo")}
-                aria-label={`Open Todo: ${item.text}`}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <TodoStatusIcon
-                  item={item}
-                  active={runnerActive && item.id === activeTodoId}
+        <SidebarSection
+          id="sidebar-todo"
+          label={t("sidebar.tasks")}
+          // Last section: no trailing rule left hanging over empty space.
+          className="border-b-0"
+          // Count what is listed below it: open work, not finished work.
+          count={openItems.length || undefined}
+          actions={
+            <>
+              {runnerActive && (
+                <Loader2
+                  className="size-3.5 shrink-0 animate-spin text-primary"
+                  aria-label="Todo running"
                 />
-                <span className="truncate" title={item.text}>
-                  {item.text}
-                </span>
-              </button>
-            ))}
-            {openItems.length === 0 && items.length > 0 && (
-              <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-                <CheckCircle2 className="size-3.5" aria-hidden />
-                All tasks finished
-              </div>
-            )}
-            {openItems.length > 4 && (
-              <button
-                type="button"
+              )}
+              <SidebarIconAction
+                label={t("sidebar.tasks")}
                 onClick={() => setViewMode("todo")}
-                className="w-full rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {openItems.length - 4} more tasks
-              </button>
-            )}
-          </div>
-        </section>
+                <ListTodo className="size-4" aria-hidden />
+              </SidebarIconAction>
+            </>
+          }
+        >
+          {items.length === 0 ? (
+            <SidebarEmpty>{t("sidebar.noTasks")}</SidebarEmpty>
+          ) : openItems.length === 0 ? (
+            <div
+              className={cn(SIDEBAR_ROW, "text-xs text-muted-foreground")}
+            >
+              <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
+              <span className="truncate">All {doneCount} tasks finished</span>
+            </div>
+          ) : (
+            <>
+              {openItems.slice(0, 5).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setViewMode("todo")}
+                  aria-label={`Open Todo: ${item.text}`}
+                  title={item.text}
+                  className={cn(
+                    SIDEBAR_ROW,
+                    SIDEBAR_ROW_IDLE,
+                    "text-xs text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <TodoStatusIcon
+                    item={item}
+                    active={runnerActive && item.id === activeTodoId}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{item.text}</span>
+                </button>
+              ))}
+              {openItems.length > 5 && (
+                <button
+                  type="button"
+                  onClick={() => setViewMode("todo")}
+                  className={cn(
+                    SIDEBAR_ROW,
+                    SIDEBAR_ROW_IDLE,
+                    "pl-[26px] text-xs text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {openItems.length - 5} more
+                </button>
+              )}
+            </>
+          )}
+        </SidebarSection>
       </div>
 
-      <div className="flex shrink-0 flex-col gap-1 border-t border-border p-2">
+      <div className="flex shrink-0 flex-col gap-1 border-t border-border p-1.5">
+        <MemoryIndicator />
         <UpdateButton />
         <CommandCenterButton />
       </div>

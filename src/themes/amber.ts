@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Amber theme preset for Black One.
@@ -18,17 +18,17 @@ export const amberTheme: ThemePreset = {
     "--popover": "0 0% 100%",
     "--popover-foreground": "30 30% 12%",
     "--primary": "30 90% 45%",
-    "--primary-foreground": "0 0% 100%",
+    "--primary-foreground": "0 0% 15%",
     "--secondary": "35 30% 91%",
     "--secondary-foreground": "30 30% 12%",
     "--muted": "35 28% 92%",
     "--muted-foreground": "30 20% 40%",
     "--accent": "20 85% 50%",
-    "--accent-foreground": "0 0% 100%",
+    "--accent-foreground": "0 0% 13%",
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "35 25% 85%",
-    "--input": "35 25% 88%",
+    "--input": "35 25% 83.5%",
     "--ring": "30 90% 45%",
   },
   dark: {
@@ -46,7 +46,7 @@ export const amberTheme: ThemePreset = {
     "--muted-foreground": "35 18% 60%",
     "--accent": "25 85% 55%",
     "--accent-foreground": "25 25% 8%",
-    "--destructive": "0 72% 55%",
+    "--destructive": "0 72% 52.5%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "25 18% 20%",
     "--input": "25 18% 18%",

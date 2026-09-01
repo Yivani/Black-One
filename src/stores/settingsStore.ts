@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import type { AppSettings } from "@/types/settings";
+import type {
+  AppSettings,
+  LegacyToolPermission,
+  ToolPermission,
+} from "@/types/settings";
+import { isLegacyContextFileDefault } from "@/lib/agentContext";
 import { DEFAULT_SETTINGS } from "@/lib/constants";
 import { persistence } from "@/lib/persistence";
 import { debounce } from "@/lib/utils";
@@ -8,13 +13,36 @@ import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
 
 const SETTINGS_KEY = "app:settings";
 
-function syncToolPermission(permission: AppSettings["tools"]["permission"]): void {
-  const map: Record<typeof permission, ReturnType<typeof useToolRuntimeStore.getState>["permissionMode"]> = {
-    ask: "manual",
-    allowlisted: "auto",
-    blocked: "manual",
-  };
-  useToolRuntimeStore.getState().setPermissionMode(map[permission]);
+const LEGACY_PERMISSIONS: Record<LegacyToolPermission, ToolPermission> = {
+  ask: "manual",
+  allowlisted: "auto",
+};
+
+const TOOL_PERMISSIONS: ToolPermission[] = [
+  "manual",
+  "auto",
+  "yolo",
+  "blocked",
+];
+
+/** Upgrades settings written before the two permission vocabularies merged. */
+function migrateToolPermission(value: unknown): ToolPermission {
+  if (typeof value !== "string") return DEFAULT_SETTINGS.tools.permission;
+  if (value in LEGACY_PERMISSIONS) {
+    return LEGACY_PERMISSIONS[value as LegacyToolPermission];
+  }
+  if ((TOOL_PERMISSIONS as string[]).includes(value)) {
+    return value as ToolPermission;
+  }
+  return DEFAULT_SETTINGS.tools.permission;
+}
+
+/** Settings own the permission; the runtime store mirrors it. */
+function syncToolPermission(permission: ToolPermission): void {
+  const runtime = useToolRuntimeStore.getState();
+  if (runtime.permissionMode !== permission) {
+    runtime.setPermissionMode(permission);
+  }
 }
 
 interface SettingsState {
@@ -25,6 +53,11 @@ interface SettingsState {
     section: K,
     patch: Partial<AppSettings[K]>,
   ) => void;
+  /**
+   * The one way to change tool permission. Writes the setting and mirrors it
+   * to the runtime store, so every mode — YOLO included — survives a reload.
+   */
+  setToolPermission: (permission: ToolPermission) => void;
   setShortcut: (actionId: string, binding: string) => void;
   resetShortcuts: () => void;
   resetAll: () => Promise<void>;
@@ -80,6 +113,31 @@ export const useSettingsStore = create<SettingsState>()(
         }
 
         const merged = mergeWithDefaults(stored);
+        merged.tools.permission = migrateToolPermission(
+          merged.tools.permission,
+        );
+
+        // Memory categories are stored as a list, so a release that adds one
+        // would leave existing installs with it switched off — and their
+        // terminal-learned facts silently filtered out of every prompt.
+        const knownCategories = new Set(merged.memory.memoryCategories);
+        merged.memory.memoryCategories = [
+          ...merged.memory.memoryCategories,
+          ...DEFAULT_SETTINGS.memory.memoryCategories.filter(
+            (category) => !knownCategories.has(category),
+          ),
+        ];
+
+        // Same trap, one release later: GEMINI.md shipped switched off, so
+        // every existing install would keep writing memory for Claude and
+        // Codex while Gemini CLI read nothing. Only a list that still matches
+        // that old default is upgraded — a list the user has actually touched
+        // is theirs.
+        if (isLegacyContextFileDefault(merged.memory.agentContextFiles)) {
+          merged.memory.agentContextFiles = [
+            ...DEFAULT_SETTINGS.memory.agentContextFiles,
+          ];
+        }
 
         // Existing installs (any stored settings at all) should not be forced
         // through the first-run onboarding wizard.
@@ -122,6 +180,14 @@ export const useSettingsStore = create<SettingsState>()(
       persistSettings(get().settings);
     },
 
+    setToolPermission: (permission) => {
+      set((state) => {
+        state.settings.tools.permission = permission;
+      });
+      syncToolPermission(permission);
+      persistSettings(get().settings);
+    },
+
     setShortcut: (actionId, binding) => {
       set((state) => {
         state.settings.shortcuts[actionId] = binding;
@@ -140,6 +206,9 @@ export const useSettingsStore = create<SettingsState>()(
       set((state) => {
         state.settings = DEFAULT_SETTINGS;
       });
+      // The runtime store mirrors this setting; without the sync a reset would
+      // leave the previous tool permission in force.
+      syncToolPermission(DEFAULT_SETTINGS.tools.permission);
       await persistence.setSetting(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
     },
   })),

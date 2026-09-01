@@ -1,6 +1,6 @@
 export type ModelCapability = "vision" | "tools" | "reasoning" | "streaming" | "audio";
 
-export type ProviderType = "demo" | "openai" | "anthropic" | "local" | "custom";
+export type ProviderType = "openai" | "anthropic" | "local" | "custom";
 
 export type ProviderApiMode = "chat-completions" | "responses" | "anthropic-messages";
 

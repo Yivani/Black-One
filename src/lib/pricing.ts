@@ -1,5 +1,3 @@
-import { DEMO_MODEL_ID, DEMO_PROVIDER_ID } from "@/lib/constants";
-
 export interface ModelPricing {
   /** Cost per 1 million tokens, in USD. */
   pricePerMillion: number;
@@ -10,12 +8,6 @@ export interface ModelPricing {
 /** Approximate per-million-token prices in USD. Used to surface spend estimates in the Activity page.
  *  These are best-effort defaults; real invoices from providers are the source of truth. */
 const PRICING: Record<string, ModelPricing> = {
-  // Black One demo
-  [`${DEMO_PROVIDER_ID}::${DEMO_MODEL_ID}`]: {
-    pricePerMillion: 0,
-    note: "Offline demo",
-  },
-
   // OpenAI
   "openai::gpt-5.6-sol": { pricePerMillion: 18 },
   "openai::gpt-5.6-terra": { pricePerMillion: 12 },
@@ -65,9 +57,6 @@ export function getModelPricing(
   modelId: string | undefined,
 ): ModelPricing | null {
   if (!providerId || !modelId) return null;
-  if (providerId === DEMO_PROVIDER_ID) {
-    return { pricePerMillion: 0, note: "Offline demo" };
-  }
   return PRICING[pricingKey(providerId, modelId)] ?? null;
 }
 

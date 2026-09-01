@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Ocean-inspired full-app color theme preset.
@@ -29,7 +29,7 @@ export const oceanTheme: ThemePreset = {
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "200 25% 86%",
-    "--input": "200 25% 90%",
+    "--input": "200 25% 84%",
     "--ring": "200 85% 34%",
   },
   dark: {
@@ -47,7 +47,7 @@ export const oceanTheme: ThemePreset = {
     "--muted-foreground": "210 20% 60%",
     "--accent": "175 70% 45%",
     "--accent-foreground": "220 40% 10%",
-    "--destructive": "0 72% 55%",
+    "--destructive": "0 72% 52.5%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "220 20% 20%",
     "--input": "220 20% 23%",

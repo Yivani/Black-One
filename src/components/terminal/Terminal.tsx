@@ -6,6 +6,8 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import "@xterm/xterm/css/xterm.css";
 import { ipc, isTauri } from "@/lib/ipc";
 import { subscribeTerminalEvents } from "@/lib/terminalChannel";
+import { reportAppError } from "@/lib/errors";
+import { forgetTerminalInput, recordTerminalInput } from "@/lib/memory";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { ContextMenu, type ContextMenuEntry } from "@/components/shared/ContextMenu";
 
@@ -92,6 +94,28 @@ export function Terminal({ terminalId, active }: TerminalProps) {
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const setActiveTerminal = useTerminalStore((s) => s.setActiveTerminal);
 
+  /**
+   * Sends input only while the shell is still alive.
+   *
+   * A keystroke can land after the tab was closed or the shell exited, and the
+   * backend rightly reports that as "not found: terminal <id>". Nothing can act
+   * on it, so it must not reach the error log.
+   */
+  const sendInput = (data: string) => {
+    if (!useTerminalStore.getState().isTerminalLive(terminalId)) return;
+    void ipc.writeTerminal(terminalId, data);
+    // Watch for "remember that …" typed at a CLI agent running in this pane.
+    // Fire-and-forget: memory must never delay a keystroke reaching the shell.
+    void recordTerminalInput(terminalId, data).catch((error) => {
+      // Typing must never break, but a silent catch made a broken recorder
+      // undiagnosable — report it so it shows up in Command Center → Errors.
+      reportAppError(error, {
+        category: "storage",
+        source: "Terminal memory",
+      });
+    });
+  };
+
   useEffect(() => {
     if (!containerRef.current || !isTauri) return;
     const container = containerRef.current;
@@ -173,13 +197,8 @@ export function Terminal({ terminalId, active }: TerminalProps) {
       };
       container.addEventListener("keydown", handleKeyDown, true);
 
-      terminal.onData((data) => {
-        void ipc.writeTerminal(terminalId, data);
-      });
-
-      terminal.onBinary((data) => {
-        void ipc.writeTerminal(terminalId, data);
-      });
+      terminal.onData(sendInput);
+      terminal.onBinary(sendInput);
 
       unsubscribe = subscribeTerminalEvents(
         terminalId,
@@ -200,6 +219,7 @@ export function Terminal({ terminalId, active }: TerminalProps) {
         },
         (_event) => {
           terminal.writeln("\r\n[process exited]");
+          forgetTerminalInput(terminalId);
         },
       );
 
@@ -256,7 +276,7 @@ export function Terminal({ terminalId, active }: TerminalProps) {
     const fitAddon = fitAddonRef.current;
     if (!terminal || !fitAddon) return;
 
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       try {
         fitAddon.fit();
         const { cols, rows } = terminal;
@@ -268,9 +288,11 @@ export function Terminal({ terminalId, active }: TerminalProps) {
       }
       if (active) {
         terminal.focus();
-        terminal.scrollToBottom();
       }
     });
+    // Without this the frame still runs after an unmount, fitting a disposed
+    // terminal and resizing a session the backend may already have dropped.
+    return () => cancelAnimationFrame(frame);
   }, [active, terminalId]);
 
   const pasteFromClipboard = async () => {

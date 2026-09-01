@@ -1,17 +1,23 @@
 import { useEffect } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { playAppSound } from "@/lib/sounds";
+import type { SoundId } from "@/lib/soundCore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { isTauri } from "@/lib/ipc";
 
 /** Default haptic pulse length in milliseconds. */
 export const HAPTIC_PATTERN = 20;
 
-const DEFAULT_CLICK_SOUND = "/click.wav";
-const DEFAULT_FINISH_SOUND = "/finish.wav";
-const DEFAULT_ERROR_SOUND = "/other.wav";
-
 const INTERACTIVE_SELECTOR =
   'button, [role="button"], a, label:has(input[type="checkbox"], input[type="radio"]), [data-haptic]';
+
+/**
+ * Controls that get the toggle sound rather than the click.
+ *
+ * A switch and a button are different actions, and hearing the same tick for
+ * both is what makes an interface sound like a toy. Radix marks its switches,
+ * tabs and checkboxes with these roles.
+ */
+const TOGGLE_SELECTOR =
+  '[role="switch"], [role="checkbox"], [role="radio"], [role="tab"], input[type="checkbox"], input[type="radio"]';
 
 function vibrate(pattern: number | number[]): void {
   if (typeof navigator === "undefined") return;
@@ -31,49 +37,30 @@ function addVisualFeedback(element: HTMLElement): void {
   }, 120);
 }
 
-function resolveSoundUrl(sound: string, fallback: string): string {
-  if (sound === "default" || !sound) return fallback;
-  if (!isTauri) return fallback;
-  try {
-    return convertFileSrc(sound);
-  } catch {
-    return fallback;
-  }
+/**
+ * The one way the rest of the app makes a sound.
+ *
+ * Named after what happened, never after what it sounds like — so the sound
+ * set can be changed here without touching a single caller.
+ */
+export function playSound(id: SoundId): void {
+  playAppSound(id);
 }
 
-function playSound(url: string, volume: number): void {
-  if (typeof window === "undefined") return;
-  const audio = new Audio(url);
-  audio.volume = Math.max(0, Math.min(1, volume));
-  void audio.play().catch(() => {
-    // Autoplay may be blocked by the browser; ignore silently.
-  });
+/** Kept for the callers that predate the named sounds. */
+export function playClickSound(): void {
+  playAppSound("click");
 }
-
-function playClickSound(): void {
-  const { settings } = useSettingsStore.getState();
-  if (!settings.haptics.enabled) return;
-  const url = resolveSoundUrl(settings.haptics.clickSound, DEFAULT_CLICK_SOUND);
-  playSound(url, settings.haptics.volume);
+export function playFinishSound(): void {
+  playAppSound("complete");
 }
-
-function playFinishSound(): void {
-  const { settings } = useSettingsStore.getState();
-  if (!settings.haptics.enabled) return;
-  const url = resolveSoundUrl(settings.haptics.finishSound, DEFAULT_FINISH_SOUND);
-  playSound(url, settings.haptics.volume);
-}
-
-function playErrorSound(): void {
-  const { settings } = useSettingsStore.getState();
-  if (!settings.haptics.enabled) return;
-  const url = resolveSoundUrl(settings.haptics.errorSound, DEFAULT_ERROR_SOUND);
-  playSound(url, settings.haptics.volume);
+export function playErrorSound(): void {
+  playAppSound("error");
 }
 
 /**
- * Trigger a haptic pulse, click sound, and a tiny visual press fallback.
- * Returns early if haptics are disabled or if navigator.vibrate is unavailable.
+ * Trigger a haptic pulse, the press sound, and a tiny visual press fallback.
+ * Returns early if haptics are disabled.
  */
 export function triggerHaptic(
   pattern: number | number[] = HAPTIC_PATTERN,
@@ -82,11 +69,9 @@ export function triggerHaptic(
   const { settings } = useSettingsStore.getState();
   if (!settings.haptics.enabled) return;
   vibrate(pattern);
-  playClickSound();
+  playAppSound("click");
   if (element) addVisualFeedback(element);
 }
-
-export { playClickSound, playFinishSound, playErrorSound };
 
 /**
  * Global haptic feedback hook. Attach it once near the app root.
@@ -103,7 +88,12 @@ export function useHapticFeedback(): void {
       if (!interactive) return;
       if (interactive.getAttribute("data-haptic") === "false") return;
 
-      triggerHaptic(HAPTIC_PATTERN, interactive);
+      const { settings } = useSettingsStore.getState();
+      if (!settings.haptics.enabled) return;
+
+      vibrate(HAPTIC_PATTERN);
+      playAppSound(interactive.closest(TOGGLE_SELECTOR) ? "toggle" : "click");
+      addVisualFeedback(interactive);
     };
 
     document.addEventListener("click", handler, { passive: true });

@@ -5,6 +5,13 @@ import { cloneToolCall, type ToolCall, type ToolPermissionMode } from "@/lib/too
 interface ToolRuntimeState {
   permissionMode: ToolPermissionMode;
   pendingCalls: ToolCall[];
+  /** Terminal ID that the currently running Todo should use for shell commands. */
+  todoTerminalId: string | null;
+  /**
+   * Workspace folder the running Todo belongs to. Tools are sandboxed to this
+   * instead of the process cwd, so each workspace acts on its own project.
+   */
+  todoWorkspaceFolder: string | null;
 
   setPermissionMode: (mode: ToolPermissionMode) => void;
   queuePending: (calls: ToolCall[]) => void;
@@ -15,12 +22,16 @@ interface ToolRuntimeState {
   remove: (id: string) => void;
   clear: () => void;
   updateCall: (call: ToolCall) => void;
+  setTodoTerminal: (id: string | null) => void;
+  setTodoWorkspaceFolder: (path: string | null) => void;
 }
 
 export const useToolRuntimeStore = create<ToolRuntimeState>()(
   immer((set, get) => ({
     permissionMode: "auto",
     pendingCalls: [],
+    todoTerminalId: null,
+    todoWorkspaceFolder: null,
 
     setPermissionMode: (mode) => {
       set((state) => {
@@ -110,6 +121,18 @@ export const useToolRuntimeStore = create<ToolRuntimeState>()(
         if (idx >= 0) {
           state.pendingCalls[idx] = cloneToolCall(call);
         }
+      });
+    },
+
+    setTodoTerminal: (id) => {
+      set((state) => {
+        state.todoTerminalId = id;
+      });
+    },
+
+    setTodoWorkspaceFolder: (path) => {
+      set((state) => {
+        state.todoWorkspaceFolder = path;
       });
     },
   })),

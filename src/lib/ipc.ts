@@ -86,17 +86,34 @@ export interface AppInfo {
   arch: string;
 }
 
+/**
+ * The latest GitHub release, exactly as the backend read it.
+ *
+ * Whether it is newer than what is running, and which asset to download, are
+ * decided in `updateCore.ts` — this is the raw material for that.
+ */
 export interface UpdateCheckResult {
-  status: "up-to-date" | "available" | "error";
-  latest?: string | null;
-  commitSha?: string | null;
+  /** "ok" when a release was read, "none" when there are none, "error" otherwise. */
+  status: "ok" | "none" | "error";
+  error?: string | null;
+  tag?: string | null;
+  name?: string | null;
   notes?: string | null;
+  publishedAt?: string | null;
+  pageUrl?: string | null;
+  commitSha?: string | null;
+  prerelease?: boolean;
+  assets?: Array<{ name: string; url: string; size: number }>;
+  currentVersion: string;
+  platform: string;
+  arch: string;
 }
 
 export interface TerminalSummary {
   id: string;
   title: string;
   shell: string;
+  cwd: string;
 }
 
 export interface TerminalOutputEvent {
@@ -170,7 +187,17 @@ export function sessionFromRow(row: SessionRow): ChatSession {
 }
 
 export function messageToRow(message: Message): MessageRow {
-  const { mode, cost, reasoning, toolCalls, toolResults, toolWorkspace, role, ...rest } = message;
+  const {
+    mode,
+    cost,
+    reasoning,
+    toolCalls,
+    toolResults,
+    toolWorkspace,
+    toolTerminalId,
+    role,
+    ...rest
+  } = message;
   const metadata: Record<string, unknown> = {};
   if (mode !== undefined) metadata.mode = mode;
   if (cost !== undefined) metadata.cost = cost;
@@ -178,6 +205,7 @@ export function messageToRow(message: Message): MessageRow {
   if (toolCalls !== undefined) metadata.toolCalls = toolCalls;
   if (toolResults !== undefined) metadata.toolResults = toolResults;
   if (toolWorkspace !== undefined) metadata.toolWorkspace = toolWorkspace;
+  if (toolTerminalId !== undefined) metadata.toolTerminalId = toolTerminalId;
   let rowRole = role;
   if (role === "memory") {
     rowRole = "system";
@@ -219,6 +247,10 @@ export function messageFromRow(row: MessageRow): Message {
     toolWorkspace: Array.isArray(metadata?.toolWorkspace)
       ? (metadata.toolWorkspace as string[])
       : undefined,
+    toolTerminalId:
+      typeof metadata?.toolTerminalId === "string"
+        ? metadata.toolTerminalId
+        : undefined,
   };
 }
 
@@ -259,8 +291,13 @@ export const ipc = {
   getApiKey: (providerId: string) => invokeTauri<string | null>("get_api_key", { providerId }),
   deleteApiKey: (providerId: string) => invokeTauri<void>("delete_api_key", { providerId }),
 
-  readFileText: (path: string) => invokeTauri<string>("read_file_text", { path }),
-  readDirEntries: (path: string) => invokeTauri<DirEntry[]>("read_dir_entries", { path }),
+  readFileText: (path: string, roots?: string[]) =>
+    invokeTauri<string>("read_file_text", { path, roots }),
+  readDirEntries: (path: string, roots?: string[]) =>
+    invokeTauri<DirEntry[]>("read_dir_entries", { path, roots }),
+  /** Canonicalizing containment check, for callers that bypass the shell command. */
+  pathWithinRoots: (path: string, roots: string[]) =>
+    invokeTauri<boolean>("path_within_roots", { path, roots }),
   writeFileText: (path: string, content: string, roots?: string[]) =>
     invokeTauri<void>("write_file_text", { path, content, roots }),
   createDir: (path: string, roots?: string[]) =>
@@ -276,6 +313,7 @@ export const ipc = {
   getDataDir: () => invokeTauri<string>("get_data_dir"),
   getCwd: () => invokeTauri<string>("get_cwd"),
   pickSoundFile: () => invokeTauri<string | null>("pick_sound_file"),
+  pickWorkspaceFolder: () => invokeTauri<string | null>("pick_workspace_folder"),
 
   gitStatus: (path: string) => invokeTauri<GitStatus>("git_status", { path }),
   gitInit: (path: string) => invokeTauri<GitStatus>("git_init", { path }),
@@ -299,6 +337,10 @@ export const ipc = {
   relaunchApp: () => invokeTauri<void>("relaunch_app"),
   setAutoStart: (enabled: boolean) => invokeTauri<void>("set_auto_start", { enabled }),
   isAutoStartEnabled: () => invokeTauri<boolean>("is_auto_start_enabled"),
+  wasAutoStarted: () => invokeTauri<boolean>("was_auto_started"),
+  /** Pushes workspace activity onto the tray icon's badge and tooltip. */
+  setTrayStatus: (status: { activity: string; summary: string }) =>
+    invokeTauri<void>("set_tray_status", { status }),
 
   setQuickChatShortcut: (binding: string) =>
     invokeTauri<void>("set_quick_chat_shortcut", { binding }),

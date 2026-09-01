@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Coffee theme preset for Black One.
@@ -28,7 +28,7 @@ export const coffeeTheme: ThemePreset = {
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "30 12% 85%",
-    "--input": "30 12% 88%",
+    "--input": "30 12% 84%",
     "--ring": "25 55% 40%",
   },
   dark: {

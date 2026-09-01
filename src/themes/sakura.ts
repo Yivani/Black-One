@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Sakura theme preset for Black One.
@@ -17,7 +17,7 @@ export const sakuraTheme: ThemePreset = {
     "--card-foreground": "340 30% 18%",
     "--popover": "0 0% 100%",
     "--popover-foreground": "340 30% 18%",
-    "--primary": "340 75% 58%",
+    "--primary": "340 75% 50.5%",
     "--primary-foreground": "0 0% 100%",
     "--secondary": "350 30% 92%",
     "--secondary-foreground": "340 30% 18%",
@@ -28,7 +28,7 @@ export const sakuraTheme: ThemePreset = {
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "350 25% 87%",
-    "--input": "350 25% 90%",
+    "--input": "350 25% 86%",
     "--ring": "340 75% 58%",
   },
   dark: {
@@ -45,8 +45,8 @@ export const sakuraTheme: ThemePreset = {
     "--muted": "340 15% 16%",
     "--muted-foreground": "350 18% 62%",
     "--accent": "340 70% 58%",
-    "--accent-foreground": "0 0% 100%",
-    "--destructive": "0 72% 55%",
+    "--accent-foreground": "0 0% 8.5%",
+    "--destructive": "0 72% 52.5%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "340 18% 22%",
     "--input": "340 18% 20%",

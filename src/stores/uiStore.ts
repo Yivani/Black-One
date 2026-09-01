@@ -69,12 +69,17 @@ export const LAYOUT_PRESETS: SavedLayout[] = [
 ];
 
 export type SettingsCategory =
+  | "general"
   | "appearance"
+  | "chat"
+  | "models"
+  | "tools"
   | "memory"
-  | "advanced"
+  | "notifications"
   | "haptics"
-  | "providers"
   | "shortcuts"
+  | "providers"
+  | "advanced"
   | "about";
 
 interface UiState {
@@ -89,6 +94,8 @@ interface UiState {
   settingsOpen: boolean;
   settingsCategory: SettingsCategory;
   commandPaletteOpen: boolean;
+  /** Command Center dialog. Lifted out of its button so the tray can open it. */
+  commandCenterOpen: boolean;
   sidebarSearch: string;
   /** Incremented to request composer focus from anywhere. */
   composerFocusSignal: number;
@@ -128,6 +135,7 @@ interface UiState {
   closeSettings: () => void;
   setSettingsCategory: (category: SettingsCategory) => void;
   setCommandPaletteOpen: (open: boolean) => void;
+  setCommandCenterOpen: (open: boolean) => void;
   setSidebarSearch: (query: string) => void;
   requestComposerFocus: () => void;
   requestAttachFile: () => void;
@@ -183,6 +191,7 @@ export const useUiStore = create<UiState>()(
     settingsOpen: false,
     settingsCategory: "appearance",
     commandPaletteOpen: false,
+    commandCenterOpen: false,
     sidebarSearch: "",
     composerFocusSignal: 0,
     attachFileSignal: 0,
@@ -336,6 +345,11 @@ export const useUiStore = create<UiState>()(
     setCommandPaletteOpen: (open) =>
       set((state) => {
         state.commandPaletteOpen = open;
+      }),
+
+    setCommandCenterOpen: (open) =>
+      set((state) => {
+        state.commandCenterOpen = open;
       }),
 
     setSidebarSearch: (query) =>

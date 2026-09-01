@@ -101,6 +101,11 @@ const PERMISSION_MODES = [
     label: "YOLO",
     description: "All file and shell actions run without asking.",
   },
+  {
+    id: "blocked" as const,
+    label: "Blocked",
+    description: "Tools are switched off. The model cannot touch files or run commands.",
+  },
 ];
 
 const DEFAULT_EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high"];
@@ -124,8 +129,7 @@ function clampEffortIndex(levels: string[], current: string): number {
 
 function PermissionModeToggle() {
   const mode = useToolRuntimeStore((s) => s.permissionMode);
-  const setMode = useToolRuntimeStore((s) => s.setPermissionMode);
-  const updateSection = useSettingsStore((s) => s.updateSection);
+  const setToolPermission = useSettingsStore((s) => s.setToolPermission);
   const active = PERMISSION_MODES.find((m) => m.id === mode) ?? PERMISSION_MODES[0];
 
   const modeColor =
@@ -156,26 +160,20 @@ function PermissionModeToggle() {
           value={mode}
           onValueChange={(value) => {
             const next = value as typeof mode;
-            setMode(next);
-            if (next !== "yolo") {
-              updateSection("tools", {
-                permission: next === "auto" ? "allowlisted" : "ask",
-              });
-            } else {
-              const sessionId =
-                useSessionStore.getState().activeSessionId;
-              if (sessionId) {
-                void useChatStore
-                  .getState()
-                  .approvePendingTools(sessionId)
-                  .catch((error) =>
-                    toast.error("Could not resume tools", {
-                      description:
-                        error instanceof Error ? error.message : String(error),
-                    }),
-                  );
-              }
-            }
+            setToolPermission(next);
+            if (next !== "yolo") return;
+            // Switching to YOLO releases anything already waiting for approval.
+            const sessionId = useSessionStore.getState().activeSessionId;
+            if (!sessionId) return;
+            void useChatStore
+              .getState()
+              .approvePendingTools(sessionId)
+              .catch((error) =>
+                toast.error("Could not resume tools", {
+                  description:
+                    error instanceof Error ? error.message : String(error),
+                }),
+              );
           }}
         >
           {PERMISSION_MODES.map((m) => (

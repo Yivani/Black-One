@@ -1,7 +1,18 @@
 import { toast } from "sonner";
 import { ipc, isTauri } from "@/lib/ipc";
+import { subscribeTerminalEvents } from "@/lib/terminalChannel";
+import { recordTerminalObservation } from "@/lib/memory";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useTerminalStore } from "@/stores/terminalStore";
 import type { Attachment } from "@/types/chat";
+import { generateId } from "@/lib/utils";
+import {
+  buildTerminalScript,
+  parseTerminalOutput,
+  pathLooksInsideAny,
+  resolvePath,
+  type TerminalScript,
+} from "@/lib/toolPaths";
 import {
   cloneToolCall,
   parseToolCalls,
@@ -23,11 +34,15 @@ export {
 export type { ToolCall, ToolName, ToolResult };
 
 export type RiskLevel = "low" | "high" | "critical";
-export type ToolPermissionMode = "manual" | "auto" | "yolo";
+export type ToolPermissionMode = "manual" | "auto" | "yolo" | "blocked";
 
 export interface ToolContext {
   attachedFolders: string[];
   cwd?: string;
+  /** When set, shell_command runs in this terminal instead of a one-shot subprocess. */
+  terminalId?: string;
+  /** Scopes anything learned from a command to the workspace that ran it. */
+  workspaceId?: string;
 }
 
 interface ToolDefinition {
@@ -208,25 +223,38 @@ export function classifyRisk(call: ToolCall, attachedFolders: string[]): RiskLev
     return "high";
   }
 
-  if (call.name === "write_file" || call.name === "create_dir") {
-    const path = call.args.path ?? "";
-    if (attachedFolders.length > 0 && !pathLooksInsideAny(path, attachedFolders)) {
-      return "high";
-    }
-    return "low";
+  // Any path that resolves outside the workspace is elevated, reads included:
+  // a file the agent was never granted is worth a confirmation prompt even
+  // when the operation itself is non-destructive.
+  const path = call.args.path ?? "";
+  if (
+    attachedFolders.length > 0 &&
+    !pathLooksInsideAny(resolvePath(path, attachedFolders), attachedFolders)
+  ) {
+    return "high";
   }
 
   return "low";
 }
 
+const AUTO_APPROVED_TOOLS: ToolName[] = ["read_file", "list_dir"];
+
 export function shouldAutoApprove(
   call: ToolCall,
   mode: ToolPermissionMode,
-  _attachedFolders: string[],
+  attachedFolders: string[],
 ): boolean {
+  if (mode === "blocked") return false;
   if (mode === "yolo") return true;
   if (mode === "manual") return false;
-  return call.name === "read_file" || call.name === "list_dir";
+  if (!AUTO_APPROVED_TOOLS.includes(call.name)) return false;
+  // Auto mode silently runs reads, so it must only cover reads that stay
+  // inside the workspace. Without a workspace there is nothing to stay inside.
+  if (attachedFolders.length === 0) return false;
+  return pathLooksInsideAny(
+    resolvePath(call.args.path ?? "", attachedFolders),
+    attachedFolders,
+  );
 }
 
 export function extractAttachedFolders(attachments: Attachment[]): string[] {
@@ -235,26 +263,199 @@ export function extractAttachedFolders(attachments: Attachment[]): string[] {
     .map((a) => a.path);
 }
 
-function pathLooksInsideAny(path: string, roots: string[]): boolean {
-  if (roots.length === 0) return true;
-  const normalized = path.replace(/\\/g, "/").toLowerCase();
-  return roots.some((root) => {
-    const rootNormalized = root.replace(/\\/g, "/").toLowerCase();
-    return normalized === rootNormalized || normalized.startsWith(rootNormalized + "/");
+function base64ToBytes(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+const TERMINAL_COMMAND_TIMEOUT_MS = 60_000;
+/** ETX -- what Ctrl+C sends, to cancel a command left running after a timeout. */
+const TERMINAL_INTERRUPT = "\u0003";
+
+interface TerminalShellResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+}
+
+/**
+ * One command at a time per terminal. Two scripts written into the same PTY
+ * concurrently would interleave their output and their sentinels.
+ */
+const terminalQueues = new Map<string, Promise<unknown>>();
+
+function runExclusively<T>(
+  terminalId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const previous = terminalQueues.get(terminalId) ?? Promise.resolve();
+  const next = previous.then(task, task);
+  terminalQueues.set(
+    terminalId,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
+function decodeTerminalChunk(data: string): string {
+  try {
+    return new TextDecoder().decode(base64ToBytes(data));
+  } catch {
+    return data;
+  }
+}
+
+/** Matches the subprocess path's cap, so neither can be used to exhaust memory. */
+const MAX_TERMINAL_CAPTURE_BYTES = 256 * 1024;
+
+function awaitTerminalCommand(
+  terminalId: string,
+  script: TerminalScript,
+): Promise<TerminalShellResult> {
+  return new Promise<TerminalShellResult>((resolve) => {
+    let buffer = "";
+    let truncated = false;
+    // Everything before this index has already been searched for the end
+    // marker; without it, a long-running command re-scans its whole output on
+    // every PTY event.
+    let scanned = 0;
+    let settled = false;
+
+    const captured = () =>
+      truncated ? `… earlier output dropped\n${buffer}` : buffer;
+
+    const finish = (result: TerminalShellResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      // The command is still running in the user's terminal; interrupt it
+      // rather than leaving it to collide with whatever runs next. Best-effort:
+      // the terminal may have been closed, and there is nothing to report then.
+      if (useTerminalStore.getState().isTerminalLive(terminalId)) {
+        void ipc.writeTerminal(terminalId, TERMINAL_INTERRUPT);
+      }
+      finish({
+        stdout: parseTerminalOutput(captured(), script)?.output ?? "",
+        stderr: "",
+        exitCode: null,
+        timedOut: true,
+      });
+    }, TERMINAL_COMMAND_TIMEOUT_MS);
+
+    const unsubscribe = subscribeTerminalEvents(
+      terminalId,
+      (event) => {
+        buffer += decodeTerminalChunk(event.data);
+        if (buffer.length > MAX_TERMINAL_CAPTURE_BYTES) {
+          // Keep the tail: it holds the sentinels that end the command.
+          const dropped = buffer.length - MAX_TERMINAL_CAPTURE_BYTES;
+          buffer = buffer.slice(dropped);
+          scanned = Math.max(0, scanned - dropped);
+          truncated = true;
+        }
+
+        // Rescan only the new bytes, plus enough overlap for a marker split
+        // across two chunks.
+        const from = Math.max(0, scanned - script.endMarker.length);
+        if (buffer.indexOf(script.endMarker, from) < 0) {
+          scanned = buffer.length;
+          return;
+        }
+
+        const parsed = parseTerminalOutput(captured(), script);
+        if (!parsed) {
+          scanned = buffer.length;
+          return;
+        }
+        finish({
+          stdout: parsed.output,
+          stderr:
+            parsed.exitCode === null
+              ? "Could not read the command's exit status."
+              : "",
+          exitCode: parsed.exitCode,
+          timedOut: false,
+        });
+      },
+      () => {
+        const partial = parseTerminalOutput(captured(), script);
+        finish({
+          stdout: partial?.output ?? "",
+          stderr: "Terminal closed while running command.",
+          exitCode: partial?.exitCode ?? null,
+          timedOut: false,
+        });
+      },
+    );
+
+    void ipc.writeTerminal(terminalId, `${script.script}\n`);
   });
 }
 
-function resolvePath(path: string, attachedFolders: string[]): string {
-  if (attachedFolders.length === 0) return path;
-  const normalized = path.replace(/\\/g, "/");
-  if (
-    normalized.startsWith("/") ||
-    (/^[a-z]:/i.test(normalized) && normalized.length > 2 && normalized[2] === "/")
-  ) {
-    return path;
+async function executeShellCommandInTerminal(
+  terminalId: string,
+  command: string,
+  cwd: string,
+  roots: string[],
+): Promise<TerminalShellResult> {
+  const terminal = useTerminalStore
+    .getState()
+    .terminals.find((t) => t.id === terminalId);
+  if (!terminal) {
+    return {
+      stdout: "",
+      stderr: "Selected terminal no longer exists.",
+      exitCode: 1,
+      timedOut: false,
+    };
   }
-  const base = attachedFolders[0];
-  return base.replace(/\\/g, "/") + "/" + normalized;
+  if (terminal.exited) {
+    // The tab is still listed so its scrollback stays readable, but its shell
+    // is gone — writing a script there would fail on an absent session.
+    return {
+      stdout: "",
+      stderr: `The shell in "${terminal.title}" has exited. Open a new terminal.`,
+      exitCode: 1,
+      timedOut: false,
+    };
+  }
+
+  // The subprocess path re-validates the working directory in Rust with
+  // canonicalized paths. This path must do the same before writing into a
+  // live shell, or it becomes the weakest link in the sandbox.
+  if (roots.length > 0 && !(await ipc.pathWithinRoots(cwd, roots))) {
+    return {
+      stdout: "",
+      stderr: `Shell cwd is outside attached folders: ${cwd}`,
+      exitCode: 1,
+      timedOut: false,
+    };
+  }
+
+  const script = buildTerminalScript({
+    command,
+    cwd,
+    terminalCwd: terminal.cwd,
+    shell: terminal.shell,
+    token: generateId(),
+  });
+
+  return runExclusively(terminalId, () =>
+    awaitTerminalCommand(terminalId, script),
+  );
 }
 
 export async function executeTool(
@@ -298,7 +499,7 @@ export async function executeTool(
     switch (call.name) {
       case "read_file": {
         const path = resolvePath(call.args.path, roots);
-        const output = await ipc.readFileText(path);
+        const output = await ipc.readFileText(path, roots);
         return { ...call, status: "done", result: { success: true, output } };
       }
       case "write_file": {
@@ -329,7 +530,7 @@ export async function executeTool(
       }
       case "list_dir": {
         const path = resolvePath(call.args.path, roots);
-        const entries = await ipc.readDirEntries(path);
+        const entries = await ipc.readDirEntries(path, roots);
         const lines = entries.map((e) => (e.isDir ? `${e.name}/` : e.name));
         return { ...call, status: "done", result: { success: true, output: lines.join("\n") || "(empty)" } };
       }
@@ -340,7 +541,29 @@ export async function executeTool(
         if (roots.length > 0 && !pathLooksInsideAny(cwd, roots)) {
           return { ...call, status: "error", result: { success: false, error: "Shell cwd is outside attached folders." } };
         }
-        const result = await ipc.executeShellCommand(call.args.command, cwd, roots);
+        const result = context.terminalId
+          ? await executeShellCommandInTerminal(
+              context.terminalId,
+              call.args.command,
+              cwd,
+              roots,
+            )
+          : await ipc.executeShellCommand(call.args.command, cwd, roots);
+        // Learn from what actually ran. Extraction is synchronous and usually
+        // finds nothing, so this costs microseconds on the common path; a disk
+        // write only happens when a genuinely new fact appears.
+        void recordTerminalObservation(
+          {
+            command: call.args.command,
+            cwd,
+            output: [result.stdout, result.stderr].filter(Boolean).join("\n"),
+            exitCode: result.exitCode,
+            timedOut: result.timedOut,
+          },
+        ).catch(() => {
+          // Memory is an enhancement; it must never fail a tool call.
+        });
+
         const output = [result.stdout, result.stderr]
           .filter(Boolean)
           .join("\n")

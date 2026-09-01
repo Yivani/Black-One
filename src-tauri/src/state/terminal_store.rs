@@ -14,6 +14,7 @@ pub struct TerminalSummary {
     pub id: String,
     pub title: String,
     pub shell: String,
+    pub cwd: String,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -39,6 +40,7 @@ pub struct TerminalSession {
     pub id: String,
     pub title: String,
     pub shell: String,
+    pub cwd: String,
     pub _master: Box<dyn MasterPty + Send>,
     pub child: Box<dyn Child + Send>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -217,16 +219,20 @@ fn title_for_shell(shell: &Shell, cwd: Option<&str>) -> String {
     format!("{} — {}", shell_display_name(shell), cwd_label)
 }
 
+type Sessions = Arc<Mutex<HashMap<String, TerminalSession>>>;
+
 #[derive(Default)]
 pub struct TerminalManager {
-    sessions: Mutex<HashMap<String, TerminalSession>>,
+    /// Shared with each session's reader thread so a shell that exits can drop
+    /// its own entry instead of leaving the PTY master and child behind.
+    sessions: Sessions,
     channel: Mutex<Option<Channel<TerminalEvent>>>,
 }
 
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             channel: Mutex::new(None),
         }
     }
@@ -293,6 +299,7 @@ impl TerminalManager {
 
         let id_for_thread = id.clone();
         let channel_for_thread = channel.clone();
+        let sessions_for_thread = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let mut buf = [0u8; 1024];
             loop {
@@ -311,22 +318,34 @@ impl TerminalManager {
                     Err(_) => break,
                 }
             }
+            // The shell is gone; drop the session so the PTY master closes and
+            // the child is reaped rather than lingering for the app's lifetime.
+            // The tab stays open on the frontend so its scrollback is readable,
+            // which is why `resize` tolerates an id that is no longer here.
+            if let Ok(mut sessions) = sessions_for_thread.lock() {
+                if let Some(mut session) = sessions.remove(&id_for_thread) {
+                    let _ = session.child.wait();
+                }
+            }
             let _ = channel_for_thread.send(TerminalEvent::Closed(TerminalClosedEvent {
                 id: id_for_thread,
             }));
         });
 
-        let title = title_for_shell(&shell, cwd.as_deref());
+        let cwd_string = cwd.unwrap_or_else(|| "~".to_string());
+        let title = title_for_shell(&shell, Some(&cwd_string));
         let summary = TerminalSummary {
             id: id.clone(),
             title: title.clone(),
             shell: shell_display_name(&shell),
+            cwd: cwd_string.clone(),
         };
 
         let session = TerminalSession {
             id,
             title,
             shell: shell_display_name(&shell),
+            cwd: cwd_string,
             _master: pair.master,
             child,
             writer,
@@ -340,6 +359,11 @@ impl TerminalManager {
         Ok(summary)
     }
 
+    /// Writes to a terminal, failing when it is gone.
+    ///
+    /// Unlike `resize`, this stays loud: the tool runtime writes a script and
+    /// then waits for its sentinel, so a silently dropped write would hang
+    /// until the capture timeout instead of failing immediately.
     pub fn write(&self, id: &str, data: &str) -> Result<(), AppError> {
         let sessions = self
             .sessions
@@ -365,9 +389,12 @@ impl TerminalManager {
             .sessions
             .lock()
             .map_err(|e| AppError::InvalidInput(e.to_string()))?;
-        let session = sessions
-            .get(id)
-            .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+        // Resizing races with every layout change: a pane can be closed, or its
+        // shell can exit, between the observer firing and this call landing.
+        // Nothing can act on that, so a missing terminal is not an error.
+        let Some(session) = sessions.get(id) else {
+            return Ok(());
+        };
         session._master.resize(PtySize {
             cols,
             rows,
@@ -399,7 +426,87 @@ impl TerminalManager {
                 id: s.id.clone(),
                 title: s.title.clone(),
                 shell: s.shell.clone(),
+                cwd: s.cwd.clone(),
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reaped session is observable exactly where it matters: a write to it
+    /// reports NotFound instead of disappearing into a dead PTY.
+    fn is_reaped(manager: &TerminalManager, id: &str) -> bool {
+        matches!(manager.write(id, ""), Err(AppError::NotFound(_)))
+    }
+
+    /// Waits for a predicate, polling briefly. The reader thread reaps a
+    /// session asynchronously, so the test cannot assert immediately.
+    fn eventually(mut check: impl FnMut() -> bool) -> bool {
+        for _ in 0..200 {
+            if check() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        false
+    }
+
+    #[test]
+    fn resizing_an_unknown_terminal_is_a_no_op() {
+        let manager = TerminalManager::new();
+        assert!(
+            manager.resize("does-not-exist", 80, 24).is_ok(),
+            "resize races with close by nature and must stay quiet",
+        );
+    }
+
+    #[test]
+    fn a_zero_sized_resize_is_ignored_before_the_lookup() {
+        let manager = TerminalManager::new();
+        assert!(manager.resize("does-not-exist", 0, 0).is_ok());
+    }
+
+    #[test]
+    fn writing_to_an_unknown_terminal_still_reports_the_failure() {
+        let manager = TerminalManager::new();
+        let error = manager.write("does-not-exist", "ls\n").unwrap_err();
+        assert!(
+            matches!(error, AppError::NotFound(_)),
+            "the tool runtime waits on a sentinel and must learn the write was dropped",
+        );
+    }
+
+    #[test]
+    fn closing_an_unknown_terminal_is_a_no_op() {
+        let manager = TerminalManager::new();
+        assert!(manager.close("does-not-exist").is_ok());
+    }
+
+    #[test]
+    fn creating_a_terminal_without_a_channel_fails_instead_of_leaking_a_pty() {
+        let manager = TerminalManager::new();
+        assert!(manager.create(None, None).is_err());
+        assert!(manager.list().unwrap().is_empty());
+    }
+
+    /// The regression this file was changed for: a shell that exits used to
+    /// leave its session in the map forever, holding the PTY master and an
+    /// unreaped child.
+    #[test]
+    #[ignore = "needs a real PTY and a registered channel; run with --ignored"]
+    fn an_exited_shell_reaps_its_own_session() {
+        let manager = TerminalManager::new();
+        let summary = manager
+            .create(None, None)
+            .expect("a channel must be registered for this test");
+        assert!(!is_reaped(&manager, &summary.id));
+        manager.write(&summary.id, "exit\r\n").unwrap();
+        assert!(
+            eventually(|| is_reaped(&manager, &summary.id)),
+            "the reader thread should drop the session once the shell exits",
+        );
     }
 }

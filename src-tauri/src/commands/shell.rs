@@ -130,15 +130,24 @@ pub fn execute_shell_command(
     })
 }
 
-fn read_limited(mut pipe: impl Read) -> String {
-    let mut buffer = vec![0u8; MAX_OUTPUT_BYTES + 1];
-    let bytes_read = match pipe.read(&mut buffer) {
-        Ok(n) => n,
-        Err(_) => return String::new(),
-    };
-    buffer.truncate(bytes_read);
+/// Drains the pipe to end-of-stream, capped at `MAX_OUTPUT_BYTES`.
+///
+/// A single `read()` returns only the bytes available at that moment, not the
+/// whole stream, so anything slower than an instant `echo` would be silently
+/// cut at a pipe-buffer boundary and returned as if complete.
+fn read_limited(pipe: impl Read) -> String {
+    let mut buffer = Vec::new();
+    // Read one byte past the cap so a stream that exactly fills it is still
+    // recognized as truncated.
+    let read_result = pipe
+        .take(MAX_OUTPUT_BYTES as u64 + 1)
+        .read_to_end(&mut buffer);
+    if read_result.is_err() && buffer.is_empty() {
+        return String::new();
+    }
     if buffer.len() > MAX_OUTPUT_BYTES {
-        let mut text = String::from_utf8_lossy(&buffer[..MAX_OUTPUT_BYTES]).to_string();
+        buffer.truncate(MAX_OUTPUT_BYTES);
+        let mut text = String::from_utf8_lossy(&buffer).to_string();
         text.push_str("\n… output truncated");
         text
     } else {
@@ -169,5 +178,54 @@ mod tests {
         };
         let output = execute_shell_command(failure.into(), Some(cwd), None).unwrap();
         assert_eq!(output.exit_code, Some(7));
+    }
+
+    #[test]
+    fn captures_output_larger_than_one_pipe_read() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        // A loop emitting ~200 KiB across many writes: far more than a single
+        // read() returns, and enough to cross several pipe-buffer boundaries.
+        let command = if cfg!(target_os = "windows") {
+            "for /L %i in (1,1,2000) do @echo 0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+        } else {
+            "for i in $(seq 1 2000); do echo 0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789; done"
+        };
+        let output = execute_shell_command(command.into(), Some(cwd), None).unwrap();
+        assert_eq!(output.exit_code, Some(0));
+        assert!(
+            output.stdout.len() > 100_000,
+            "expected the full stream, got {} bytes",
+            output.stdout.len()
+        );
+    }
+
+    #[test]
+    fn rejects_a_working_directory_outside_the_roots() {
+        let root = std::env::current_dir().unwrap();
+        let outside = root.parent().unwrap().to_string_lossy().to_string();
+        let result = execute_shell_command(
+            "echo nope".into(),
+            Some(outside),
+            Some(vec![root.to_string_lossy().to_string()]),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_a_traversal_working_directory() {
+        let root = std::env::current_dir().unwrap();
+        let escaped = root.join("..").to_string_lossy().to_string();
+        let result = execute_shell_command(
+            "echo nope".into(),
+            Some(escaped),
+            Some(vec![root.to_string_lossy().to_string()]),
+        );
+        assert!(
+            result.is_err(),
+            "`..` must be canonicalized away before the check"
+        );
     }
 }

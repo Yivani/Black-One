@@ -1,17 +1,42 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { toast } from "sonner";
+import { playSound } from "@/hooks/useHaptics";
 import { ipc, isTauri } from "@/lib/ipc";
 import { waitForTerminalChannel } from "@/lib/terminalChannel";
 import type { TerminalSummary } from "@/lib/ipc";
+import { getActiveWorkspace, useWorkspaceStore } from "@/stores/workspaceStore";
 
 export type TerminalLayout = "grid" | "horizontal" | "vertical";
 
-let terminalCreation: Promise<TerminalSummary | undefined> | null = null;
+/**
+ * A terminal always belongs to exactly one workspace. The backend does not
+ * know about workspaces — PTYs die with the app, so the mapping only has to
+ * live as long as the session does.
+ */
+export interface WorkspaceTerminal extends TerminalSummary {
+  workspaceId: string;
+  /**
+   * Set once the shell behind this tab has exited. The tab stays so its
+   * scrollback is readable, but there is nothing left to type into — the PTY
+   * is gone on the backend, so input would only produce an error.
+   */
+  exited?: boolean;
+}
+
+/**
+ * Guards against double-creation when several triggers fire at once, keyed by
+ * workspace — two workspaces opening their first shell must not share a result.
+ */
+const terminalCreation = new Map<
+  string,
+  Promise<WorkspaceTerminal | undefined>
+>();
 
 interface TerminalState {
-  terminals: TerminalSummary[];
-  activeTerminalId: string | null;
+  terminals: WorkspaceTerminal[];
+  /** Selected terminal per workspace, so switching back restores the view. */
+  activeTerminalByWorkspace: Record<string, string | null>;
   bottomPanelOpen: boolean;
   bottomPanelHeight: number;
   layout: TerminalLayout;
@@ -22,8 +47,14 @@ interface TerminalState {
   createTerminal: (
     cwd?: string,
     shell?: string,
-  ) => Promise<TerminalSummary | undefined>;
+    workspaceId?: string,
+  ) => Promise<WorkspaceTerminal | undefined>;
   closeTerminal: (id: string) => Promise<void>;
+  /** Called when the backend reports the shell behind a terminal has exited. */
+  markTerminalExited: (id: string) => void;
+  /** Whether a terminal is still live and safe to send input to. */
+  isTerminalLive: (id: string) => boolean;
+  closeWorkspaceTerminals: (workspaceId: string) => Promise<void>;
   setActiveTerminal: (id: string) => void;
   renameTerminal: (id: string, title: string) => void;
   setTerminalColor: (id: string, color: string | null) => void;
@@ -61,7 +92,7 @@ function readInitialLayout(): TerminalLayout {
 export const useTerminalStore = create<TerminalState>()(
   immer((set, get) => ({
     terminals: [],
-    activeTerminalId: null,
+    activeTerminalByWorkspace: {},
     bottomPanelOpen: readInitial("terminal:bottomPanelOpen", false),
     bottomPanelHeight: readInitial("terminal:bottomPanelHeight", 280),
     layout: readInitialLayout(),
@@ -72,7 +103,11 @@ export const useTerminalStore = create<TerminalState>()(
         state.bottomPanelOpen = true;
         writePersisted("terminal:bottomPanelOpen", true);
       });
-      if (get().terminals.length === 0) {
+      const workspaceId = getActiveWorkspace().id;
+      const hasTerminal = get().terminals.some(
+        (terminal) => terminal.workspaceId === workspaceId,
+      );
+      if (!hasTerminal) {
         await get().createTerminal();
       }
     },
@@ -84,56 +119,123 @@ export const useTerminalStore = create<TerminalState>()(
       });
     },
 
-    createTerminal: async (cwd, shell) => {
+    createTerminal: async (cwd, shell, workspaceId) => {
       if (!isTauri) {
         toast.error("Terminals are only available in the desktop build.");
         return;
       }
-      if (terminalCreation) return terminalCreation;
-      terminalCreation = (async () => {
+      const workspace = workspaceId
+        ? (useWorkspaceStore
+            .getState()
+            .workspaces.find((item) => item.id === workspaceId) ??
+          getActiveWorkspace())
+        : getActiveWorkspace();
+
+      const inFlight = terminalCreation.get(workspace.id);
+      if (inFlight) return inFlight;
+
+      // A workspace with a folder opens its terminals there by default.
+      const startDir = cwd ?? workspace.path ?? undefined;
+
+      const pending = (async () => {
         try {
           await waitForTerminalChannel();
-          const summary = await ipc.createTerminal(cwd, shell);
+          const summary = await ipc.createTerminal(startDir, shell);
+          const terminal: WorkspaceTerminal = {
+            ...summary,
+            workspaceId: workspace.id,
+          };
           set((state) => {
-            state.terminals.push(summary);
-            state.activeTerminalId = summary.id;
+            state.terminals.push(terminal);
+            state.activeTerminalByWorkspace[workspace.id] = terminal.id;
             state.bottomPanelOpen = true;
             writePersisted("terminal:bottomPanelOpen", true);
           });
-          return summary;
+          const workspaceStore = useWorkspaceStore.getState();
+          if (!workspaceStore.defaultTerminalByWorkspace[workspace.id]) {
+            workspaceStore.setDefaultTerminal(workspace.id, terminal.id);
+          }
+          playSound("terminal");
+          return terminal;
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "Failed to open terminal.");
           return undefined;
         } finally {
-          terminalCreation = null;
+          terminalCreation.delete(workspace.id);
         }
       })();
-      return terminalCreation;
+      terminalCreation.set(workspace.id, pending);
+      return pending;
     },
 
     closeTerminal: async (id) => {
       if (!isTauri) return;
-      try {
-        await ipc.closeTerminal(id);
-      } catch {
-        // Ignore backend close errors; remove from UI anyway.
-      }
+      const closing = get().terminals.find((terminal) => terminal.id === id);
+      // Drop it from the store *before* asking the backend to close, so React
+      // unmounts the xterm view — disconnecting its resize observer and
+      // cancelling any queued fit — while the session still exists. Closing
+      // first left a window where a stray resize or keystroke hit a session
+      // that was already gone, which surfaced as "not found: terminal <id>".
       set((state) => {
         state.terminals = state.terminals.filter((t) => t.id !== id);
         delete state.terminalColors[id];
-        if (state.activeTerminalId === id) {
-          state.activeTerminalId = state.terminals[state.terminals.length - 1]?.id ?? null;
+        const workspaceId = closing?.workspaceId;
+        if (workspaceId && state.activeTerminalByWorkspace[workspaceId] === id) {
+          // Fall back within the same workspace, never across one.
+          const siblings = state.terminals.filter(
+            (terminal) => terminal.workspaceId === workspaceId,
+          );
+          state.activeTerminalByWorkspace[workspaceId] =
+            siblings[siblings.length - 1]?.id ?? null;
         }
         if (state.terminals.length === 0) {
           state.bottomPanelOpen = false;
           writePersisted("terminal:bottomPanelOpen", false);
         }
       });
+      try {
+        await ipc.closeTerminal(id);
+      } catch {
+        // The session may already be gone; the UI is authoritative either way.
+      }
+      const workspaceId = closing?.workspaceId;
+      if (workspaceId) {
+        const workspaceStore = useWorkspaceStore.getState();
+        if (workspaceStore.defaultTerminalByWorkspace[workspaceId] === id) {
+          workspaceStore.setDefaultTerminal(
+            workspaceId,
+            get().activeTerminalByWorkspace[workspaceId] ?? null,
+          );
+        }
+      }
+    },
+
+    closeWorkspaceTerminals: async (workspaceId) => {
+      const ids = get()
+        .terminals.filter((terminal) => terminal.workspaceId === workspaceId)
+        .map((terminal) => terminal.id);
+      for (const id of ids) {
+        await get().closeTerminal(id);
+      }
+    },
+
+    markTerminalExited: (id) => {
+      set((state) => {
+        const terminal = state.terminals.find((item) => item.id === id);
+        if (terminal) terminal.exited = true;
+      });
+    },
+
+    isTerminalLive: (id) => {
+      const terminal = get().terminals.find((item) => item.id === id);
+      return terminal !== undefined && terminal.exited !== true;
     },
 
     setActiveTerminal: (id) => {
+      const terminal = get().terminals.find((item) => item.id === id);
+      if (!terminal) return;
       set((state) => {
-        state.activeTerminalId = id;
+        state.activeTerminalByWorkspace[terminal.workspaceId] = id;
       });
     },
 
@@ -154,12 +256,20 @@ export const useTerminalStore = create<TerminalState>()(
       });
     },
 
+    // Indices are positions within the active workspace's list, which is what
+    // the sidebar renders — they are mapped back onto the full list here.
     reorderTerminals: (fromIndex, toIndex) => {
+      const workspaceId = getActiveWorkspace().id;
       set((state) => {
-        const [moved] = state.terminals.splice(fromIndex, 1);
-        if (moved) {
-          state.terminals.splice(toIndex, 0, moved);
-        }
+        const positions = state.terminals
+          .map((terminal, index) => ({ terminal, index }))
+          .filter(({ terminal }) => terminal.workspaceId === workspaceId)
+          .map(({ index }) => index);
+        const from = positions[fromIndex];
+        const to = positions[toIndex];
+        if (from === undefined || to === undefined) return;
+        const [moved] = state.terminals.splice(from, 1);
+        if (moved) state.terminals.splice(to, 0, moved);
       });
     },
 
@@ -179,3 +289,8 @@ export const useTerminalStore = create<TerminalState>()(
     },
   })),
 );
+
+export {
+  selectActiveTerminalId,
+  terminalsForWorkspace,
+} from "@/lib/workspaceCore";

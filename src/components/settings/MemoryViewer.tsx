@@ -1,329 +1,435 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Brain,
-  BriefcaseBusiness,
+  Check,
   ClipboardCopy,
-  FolderKanban,
-  Heart,
-  MessageSquareText,
-  Palette,
+  Pin,
+  PinOff,
+  Plus,
   RefreshCw,
-  Shapes,
-  SlidersHorizontal,
-  Target,
+  Search,
+  Terminal,
   Trash2,
-  UserRound,
-  UsersRound,
-  type LucideIcon,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useMemory } from "@/hooks/useMemory";
+import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTranslation } from "@/hooks/useTranslation";
 import { persistence } from "@/lib/persistence";
 import {
-  ALL_CATEGORY_IDS,
   estimateMemorySize,
   PREDEFINED_CATEGORIES,
   type MemoryEntry,
 } from "@/lib/memory";
+import { cn } from "@/lib/utils";
+import { SAVE_HIGHLIGHT_MS, useMemoryStore } from "@/stores/memoryStore";
 
-const CATEGORY_ICONS: Record<string, LucideIcon> = {
-  personal: UserRound,
-  work: BriefcaseBusiness,
-  hobbies: Palette,
-  projects: FolderKanban,
-  preferences: SlidersHorizontal,
-  writing_style: MessageSquareText,
-  goals: Target,
-  relationships: UsersRound,
-  other: Shapes,
-};
+type SourceFilter = "all" | "terminal" | "chat" | "manual";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const units = ["B", "KB", "MB"];
-  const i = Math.min(Math.floor(Math.log10(bytes) / 3), units.length - 1);
-  const value = bytes / Math.pow(1000, i);
-  return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  const index = Math.min(Math.floor(Math.log10(bytes) / 3), units.length - 1);
+  const value = bytes / Math.pow(1000, index);
+  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
 function Importance({ value }: { value: MemoryEntry["importance"] }) {
   return (
-    <span className="flex items-center gap-1" aria-label={`Importance ${value} of 5`}>
+    <span className="flex items-center gap-0.5" aria-label={`Importance ${value} of 5`}>
       {Array.from({ length: 5 }, (_, index) => (
         <span
           key={index}
-          className={`size-1.5 rounded-full ${
-            index < value ? "bg-foreground" : "bg-border"
-          }`}
+          className={cn(
+            "size-1 rounded-full",
+            index < value ? "bg-foreground/70" : "bg-border",
+          )}
         />
       ))}
     </span>
   );
 }
 
+/** One memory, readable at a glance and editable in place. */
+function MemoryRow({
+  entry,
+  fresh,
+}: {
+  entry: MemoryEntry;
+  /** Highlighted because it was written moments ago. */
+  fresh: boolean;
+}) {
+  const { t } = useTranslation();
+  const edit = useMemoryStore((s) => s.edit);
+  const remove = useMemoryStore((s) => s.remove);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(entry.content);
+
+  const category = PREDEFINED_CATEGORIES.find((item) => item.id === entry.category);
+  const fromTerminal = entry.source === "terminal";
+
+  const commit = async () => {
+    const text = draft.trim();
+    if (!text || text === entry.content) {
+      setEditing(false);
+      return;
+    }
+    await edit(entry.id, { content: text });
+    setEditing(false);
+    toast.success(t("memory.updated"));
+  };
+
+  return (
+    <div
+      className={cn(
+        "group rounded-lg border p-3 transition-standard",
+        fresh
+          ? "border-primary/60 bg-primary/5"
+          : "border-border/70 bg-card hover:border-border",
+      )}
+    >
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[10px] font-normal">
+          {fromTerminal ? (
+            <Terminal className="size-2.5" aria-hidden />
+          ) : (
+            <Brain className="size-2.5" aria-hidden />
+          )}
+          {category?.label ?? entry.category}
+        </Badge>
+        {entry.pinned && (
+          <Badge className="h-5 gap-1 px-1.5 text-[10px] font-normal">
+            <Pin className="size-2.5" aria-hidden />
+            {t("memory.pinned")}
+          </Badge>
+        )}
+        {(entry.hits ?? 1) > 1 && (
+          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+            {t("memory.confirmations", { count: entry.hits ?? 1 })}
+          </span>
+        )}
+        <span className="flex-1" />
+        <Importance value={entry.importance} />
+      </div>
+
+      {editing ? (
+        <div className="space-y-2">
+          <Textarea
+            value={draft}
+            autoFocus
+            rows={3}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setEditing(false);
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                void commit();
+              }
+            }}
+            className="text-sm"
+          />
+          <p className="text-[11px] text-muted-foreground">{t("memory.editHint")}</p>
+          <div className="flex gap-1.5">
+            <Button size="sm" className="h-7" onClick={() => void commit()}>
+              <Check className="mr-1 size-3" aria-hidden />
+              {t("common.save")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              onClick={() => {
+                setDraft(entry.content);
+                setEditing(false);
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            aria-label={t("common.edit")}
+            className="min-w-0 flex-1 text-left text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {entry.content}
+          </button>
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={entry.pinned ? t("memory.unpin") : t("memory.pin")}
+                  onClick={() => void edit(entry.id, { pinned: !entry.pinned })}
+                  className="size-6 text-muted-foreground hover:text-foreground"
+                >
+                  {entry.pinned ? (
+                    <PinOff className="size-3.5" aria-hidden />
+                  ) : (
+                    <Pin className="size-3.5" aria-hidden />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {entry.pinned ? t("memory.unpin") : t("memory.pin")}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("memory.deleteOne")}
+                  onClick={() => void remove(entry.id)}
+                  className="size-6 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="size-3.5" aria-hidden />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("memory.deleteOne")}</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MemoryViewer() {
-  const { bank, loading, error, refresh, deleteAll, deleteOne } = useMemory();
-  const [selectedCategory, setSelectedCategory] = useState("all");
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<MemoryEntry | null>(null);
+  const { t } = useTranslation();
+  const entries = useMemoryStore((s) => s.entries);
+  const loading = useMemoryStore((s) => s.loading);
+  const error = useMemoryStore((s) => s.error);
+  const load = useMemoryStore((s) => s.load);
+  const clear = useMemoryStore((s) => s.clear);
+  const add = useMemoryStore((s) => s.add);
+  const recentSaves = useMemoryStore((s) => s.recentSaves);
+  const acknowledgeSaves = useMemoryStore((s) => s.acknowledgeSaves);
+  const [query, setQuery] = useState("");
+  const [source, setSource] = useState<SourceFilter>("all");
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Opening the bank is the user seeing the new facts, so stop flagging them.
+  useEffect(() => () => acknowledgeSaves(), [acknowledgeSaves]);
+
+  const freshIds = useMemo(() => {
+    const cutoff = Date.now() - SAVE_HIGHLIGHT_MS;
+    return new Set(
+      recentSaves
+        .filter((event) => (event.entry.lastSeenAt ?? 0) >= cutoff)
+        .map((event) => event.entry.id),
+    );
+  }, [recentSaves]);
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return entries
+      .filter((entry) => source === "all" || (entry.source ?? "chat") === source)
+      .filter(
+        (entry) => !needle || entry.content.toLowerCase().includes(needle),
+      )
+      .sort(
+        (a, b) =>
+          Number(b.pinned ?? false) - Number(a.pinned ?? false) ||
+          (b.lastSeenAt ?? b.createdAt) - (a.lastSeenAt ?? a.createdAt),
+      );
+  }, [entries, query, source]);
+
+  const learnedCount = entries.filter((entry) => entry.source === "terminal").length;
+
+  const handleAdd = async () => {
+    const text = draft.trim();
+    if (!text) return;
+    await add({ content: text, category: "conventions" });
+    setDraft("");
+    setAdding(false);
+    toast.success(t("memory.saved"));
+  };
 
   const handleCopyMarkdown = async () => {
     const markdown = await persistence.getSetting("app:memory-md");
     if (!markdown) {
-      toast.error("No memory markdown found.");
+      toast.error(t("memory.empty"));
       return;
     }
     try {
       await navigator.clipboard.writeText(markdown);
-      toast.success("Memory markdown copied to clipboard.");
+      toast.success(t("memory.copyMarkdown"));
     } catch {
-      toast.error("Failed to copy to clipboard.");
+      toast.error(t("common.retry"));
     }
   };
 
-  const handleDeleteAll = async () => {
-    setDeleting(true);
-    try {
-      await deleteAll();
-      setSelectedCategory("all");
-      toast.success("All memories deleted.");
-    } catch {
-      toast.error("Failed to delete memories.");
-    } finally {
-      setDeleting(false);
-      setDeleteDialogOpen(false);
-    }
-  };
-
-  const handleDeleteOne = async () => {
-    if (!pendingDelete) return;
-    setDeleting(true);
-    try {
-      await deleteOne(pendingDelete.id);
-      toast.success("Memory deleted.");
-    } catch {
-      toast.error("Failed to delete memory.");
-    } finally {
-      setDeleting(false);
-      setPendingDelete(null);
-    }
-  };
-
-  const totalEntries = bank?.entries.length ?? 0;
-  const estimatedSize = bank ? estimateMemorySize(bank) : 0;
-  const grouped = new Map<string, MemoryEntry[]>();
-  for (const entry of bank?.entries ?? []) {
-    const list = grouped.get(entry.category) ?? [];
-    list.push(entry);
-    grouped.set(entry.category, list);
-  }
-  const visibleCategories = ALL_CATEGORY_IDS.filter(
-    (id) =>
-      grouped.has(id) && (selectedCategory === "all" || selectedCategory === id),
-  );
+  const filters: Array<{ id: SourceFilter; label: string }> = [
+    { id: "all", label: t("memory.filterAll") },
+    { id: "terminal", label: t("memory.sourceTerminal") },
+    { id: "chat", label: t("memory.sourceChat") },
+    { id: "manual", label: t("memory.sourceManual") },
+  ];
 
   return (
-    <div className="grid h-full min-h-0 overflow-hidden rounded-lg border bg-background md:grid-cols-[12rem_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col border-b bg-muted/20 md:border-b-0 md:border-r">
-        <div className="border-b p-4">
-          <div className="flex items-center gap-2">
-            <Brain className="size-5" aria-hidden />
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-48 flex-1">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("memory.search")}
+            aria-label={t("memory.search")}
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
+          {filters.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              onClick={() => setSource(filter.id)}
+              className={cn(
+                "h-6 rounded-md px-2 text-[11px] font-medium transition-standard",
+                source === filter.id
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("common.refresh")}
+          onClick={() => void load()}
+          className="size-8 text-muted-foreground hover:text-foreground"
+        >
+          <RefreshCw className={cn("size-4", loading && "animate-spin")} aria-hidden />
+        </Button>
+      </div>
+
+      {adding ? (
+        <div className="space-y-2 rounded-lg border border-border p-3">
+          <Textarea
+            value={draft}
+            autoFocus
+            rows={2}
+            placeholder={t("memory.addPlaceholder")}
+            onChange={(event) => setDraft(event.target.value)}
+            className="text-sm"
+          />
+          <div className="flex gap-1.5">
+            <Button size="sm" className="h-7" onClick={() => void handleAdd()}>
+              {t("common.save")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              onClick={() => {
+                setDraft("");
+                setAdding(false);
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 self-start text-xs"
+          onClick={() => setAdding(true)}
+        >
+          <Plus className="mr-1 size-3.5" aria-hidden />
+          {t("memory.addManual")}
+        </Button>
+      )}
+
+      <ScrollArea className="min-h-0 flex-1">
+        {error ? (
+          <p className="p-4 text-sm text-destructive">{error}</p>
+        ) : entries.length === 0 ? (
+          <div className="grid min-h-48 place-items-center px-6 text-center">
             <div>
-              <p className="text-sm font-semibold">Memory bank</p>
-              <p className="text-xs tabular-nums text-muted-foreground">
-                {totalEntries} {totalEntries === 1 ? "memory" : "memories"} · {formatBytes(estimatedSize)}
+              <Brain className="mx-auto size-5 text-muted-foreground" aria-hidden />
+              <p className="mt-3 text-sm font-medium">{t("memory.empty")}</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-muted-foreground">
+                {t("memory.emptyHint")}
               </p>
             </div>
           </div>
-        </div>
+        ) : visible.length === 0 ? (
+          <p className="p-4 text-sm text-muted-foreground">{t("memory.noMatches")}</p>
+        ) : (
+          <div className="space-y-2 pr-3">
+            {visible.map((entry) => (
+              <MemoryRow key={entry.id} entry={entry} fresh={freshIds.has(entry.id)} />
+            ))}
+          </div>
+        )}
+      </ScrollArea>
 
-        <nav className="flex gap-1 overflow-x-auto p-2 md:flex-1 md:flex-col md:overflow-y-auto" aria-label="Memory categories">
-          <button
-            type="button"
-            aria-pressed={selectedCategory === "all"}
-            onClick={() => setSelectedCategory("all")}
-            className="flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground aria-pressed:bg-accent aria-pressed:text-accent-foreground aria-pressed:font-medium md:w-full"
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+        <p
+          className="text-[11px] text-muted-foreground"
+          title={`${entries.length} total · ${learnedCount} learned from the terminal`}
+        >
+          {entries.length} · {learnedCount}{" "}
+          <Terminal className="inline size-3 align-[-1px]" aria-hidden /> ·{" "}
+          {formatBytes(estimateMemorySize({ entries }))}
+        </p>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => void handleCopyMarkdown()}
           >
-            <Brain className="size-3.5" aria-hidden />
-            <span className="flex-1">All memories</span>
-            <span className="text-xs tabular-nums text-muted-foreground">{totalEntries}</span>
-          </button>
-          {PREDEFINED_CATEGORIES.map((category) => {
-            const Icon = CATEGORY_ICONS[category.id] ?? Shapes;
-            const count = grouped.get(category.id)?.length ?? 0;
-            return (
-              <button
-                key={category.id}
-                type="button"
-                aria-pressed={selectedCategory === category.id}
-                onClick={() => setSelectedCategory(category.id)}
-                className="flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground aria-pressed:bg-accent aria-pressed:text-accent-foreground aria-pressed:font-medium md:w-full"
-              >
-                <Icon className="size-3.5" aria-hidden />
-                <span className="flex-1">{category.label}</span>
-                <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="flex items-center gap-1 border-t p-2">
-          <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}>
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} aria-hidden />
-            Refresh
-          </Button>
-          <Button variant="ghost" size="icon" aria-label="Copy as Markdown" onClick={() => void handleCopyMarkdown()}>
-            <ClipboardCopy className="size-3.5" aria-hidden />
+            <ClipboardCopy className="mr-1 size-3.5" aria-hidden />
+            {t("memory.copyMarkdown")}
           </Button>
           <Button
             variant="ghost"
-            size="icon"
-            aria-label="Delete all memories"
-            className="ml-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={() => setDeleteDialogOpen(true)}
+            size="sm"
+            disabled={entries.length === 0}
+            onClick={() => setConfirmClear(true)}
+            className="h-7 text-xs text-muted-foreground hover:text-destructive"
           >
-            <Trash2 className="size-3.5" aria-hidden />
+            <X className="mr-1 size-3.5" aria-hidden />
+            {t("memory.deleteAll")}
           </Button>
         </div>
-      </aside>
+      </div>
 
-      <ScrollArea className="h-full min-h-0 bg-muted/10">
-        <div className="min-h-full p-5 [background-image:radial-gradient(circle,hsl(var(--border))_1px,transparent_1px)] [background-size:18px_18px] sm:p-7">
-          {loading && !bank ? (
-            <div className="grid min-h-72 place-items-center text-sm text-muted-foreground">
-              <div className="text-center">
-                <RefreshCw className="mx-auto mb-2 size-5 animate-spin" aria-hidden />
-                Loading memory map…
-              </div>
-            </div>
-          ) : error ? (
-            <div className="grid min-h-72 place-items-center text-center">
-              <div>
-                <p className="text-sm font-medium text-destructive">Memory map unavailable</p>
-                <p className="mt-1 text-xs text-muted-foreground">{error.message}</p>
-                <Button variant="outline" size="sm" className="mt-3" onClick={() => void refresh()}>
-                  Try again
-                </Button>
-              </div>
-            </div>
-          ) : totalEntries === 0 ? (
-            <div className="grid min-h-72 place-items-center text-center">
-              <div>
-                <Heart className="mx-auto size-5 text-muted-foreground" aria-hidden />
-                <p className="mt-3 text-sm font-medium">Your memory map is empty</p>
-                <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                  Stored memory entries will appear here. Copy the Markdown to
-                  use them with a terminal CLI.
-                </p>
-              </div>
-            </div>
-          ) : visibleCategories.length === 0 ? (
-            <div className="grid min-h-72 place-items-center text-sm text-muted-foreground">
-              No memories in this category yet.
-            </div>
-          ) : (
-            <div className="mx-auto max-w-6xl space-y-5">
-              <div className="inline-flex items-center gap-2 rounded-sm border bg-background px-3 py-2">
-                <Brain className="size-4" aria-hidden />
-                <span className="text-sm font-semibold">You</span>
-                <span className="size-1.5 rounded-full bg-foreground" aria-label="Memory bank active" />
-              </div>
-
-              <div className="space-y-4 border-l pl-5 sm:pl-7">
-                {visibleCategories.map((categoryId) => {
-                  const entries = grouped.get(categoryId) ?? [];
-                  const category = PREDEFINED_CATEGORIES.find((item) => item.id === categoryId);
-                  const Icon = CATEGORY_ICONS[categoryId] ?? Shapes;
-                  return (
-                    <section key={categoryId} className="relative grid gap-3 lg:grid-cols-[10rem_minmax(0,1fr)] lg:gap-5">
-                      <span className="absolute -left-5 top-5 h-px w-5 bg-border sm:-left-7 sm:w-7" aria-hidden />
-                      <div className="self-start rounded-sm border bg-background p-3">
-                        <div className="flex items-center gap-2">
-                          <Icon className="size-4" aria-hidden />
-                          <h3 className="text-sm font-semibold">{category?.label ?? categoryId}</h3>
-                        </div>
-                        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-                          {entries.length} {entries.length === 1 ? "memory" : "memories"}
-                        </p>
-                      </div>
-
-                      <ul className="grid gap-2 sm:grid-cols-2">
-                        {entries.map((entry) => (
-                          <li key={entry.id} className="rounded-sm border bg-background p-3 transition-colors hover:border-foreground/30">
-                            <p className="text-sm leading-relaxed">{entry.content}</p>
-                            <div className="mt-3 flex items-center gap-3 text-[11px] text-muted-foreground">
-                              <time dateTime={new Date(entry.createdAt).toISOString()}>
-                                {new Date(entry.createdAt).toLocaleDateString(undefined, {
-                                  month: "short",
-                                  day: "numeric",
-                                  year: "numeric",
-                                })}
-                              </time>
-                              <span className="ml-auto"><Importance value={entry.importance} /></span>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-6 text-muted-foreground hover:text-destructive"
-                                aria-label="Delete memory"
-                                onClick={() => setPendingDelete(entry)}
-                              >
-                                <Trash2 className="size-3" aria-hidden />
-                              </Button>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      </ScrollArea>
-
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete all memories?</DialogTitle>
-            <DialogDescription>
-              This permanently removes every stored memory. This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={deleting}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={() => void handleDeleteAll()} disabled={deleting}>
-              {deleting && <RefreshCw className="mr-1.5 size-3.5 animate-spin" aria-hidden />}
-              Delete all
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <p className="text-[11px] leading-5 text-muted-foreground">{t("memory.autoNote")}</p>
 
       <ConfirmDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-        title="Delete this memory?"
-        description={pendingDelete?.content ?? "This permanently removes the selected memory."}
-        confirmLabel="Delete"
-        danger
-        onConfirm={() => void handleDeleteOne()}
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        title={t("memory.deleteAll")}
+        description={t("memory.autoNote")}
+        confirmLabel={t("memory.deleteAll")}
+        onConfirm={() => void clear()}
       />
     </div>
   );

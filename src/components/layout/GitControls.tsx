@@ -66,8 +66,8 @@ export function GitControls({ path }: { path?: string }) {
   const handleGenerate = async () => {
     if (!path) return;
     const selected = useModelStore.getState().getSelectedModel();
-    if (!selected || selected.provider.type === "demo") {
-      toast.error("Connect a real AI provider to generate commit messages.");
+    if (!selected) {
+      toast.error("Connect an AI provider to generate commit messages.");
       return;
     }
 

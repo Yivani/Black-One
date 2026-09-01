@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Mint theme preset for Black One.
@@ -17,7 +17,7 @@ export const mintTheme: ThemePreset = {
     "--card-foreground": "170 25% 12%",
     "--popover": "160 30% 99%",
     "--popover-foreground": "170 25% 12%",
-    "--primary": "170 70% 35%",
+    "--primary": "170 70% 30%",
     "--primary-foreground": "0 0% 100%",
     "--secondary": "160 22% 92%",
     "--secondary-foreground": "170 25% 15%",
@@ -28,7 +28,7 @@ export const mintTheme: ThemePreset = {
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "160 15% 86%",
-    "--input": "160 15% 89%",
+    "--input": "160 15% 84%",
     "--ring": "170 70% 35%",
   },
   dark: {

@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Berry theme preset for Black One.
@@ -24,11 +24,11 @@ export const berryTheme: ThemePreset = {
     "--muted": "280 18% 93%",
     "--muted-foreground": "270 15% 38%",
     "--accent": "320 75% 55%",
-    "--accent-foreground": "0 0% 100%",
+    "--accent-foreground": "0 0% 8.5%",
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "280 15% 86%",
-    "--input": "280 15% 89%",
+    "--input": "280 15% 85.5%",
     "--ring": "270 65% 48%",
   },
   dark: {
@@ -45,7 +45,7 @@ export const berryTheme: ThemePreset = {
     "--muted": "270 12% 15%",
     "--muted-foreground": "280 15% 62%",
     "--accent": "320 70% 58%",
-    "--accent-foreground": "0 0% 100%",
+    "--accent-foreground": "0 0% 11%",
     "--destructive": "0 62% 48%",
     "--destructive-foreground": "0 0% 98%",
     "--border": "270 12% 20%",

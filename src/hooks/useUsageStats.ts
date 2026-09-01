@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { persistence } from "@/lib/persistence";
+import { dailyActivity, type DailyBucket } from "@/lib/usageCore";
 import { estimateMessageCost, formatContextWindow, formatCurrency } from "@/lib/utils";
 import { useModelStore } from "@/stores/modelStore";
 import type { Message } from "@/types/chat";
@@ -24,6 +25,8 @@ export interface UsageStats {
   tokens: number;
   estimatedCost: number;
   byModel: ModelUsage[];
+  /** Message volume for the last week, oldest day first. */
+  daily: DailyBucket[];
 }
 
 function modelKey(providerId: string, modelId: string): string {
@@ -129,6 +132,7 @@ export function useUsageStats(filter: UsageModeFilter) {
       tokens: assistantMessages.reduce((sum, m) => sum + (m.tokensUsed ?? 0), 0),
       estimatedCost: totalCost,
       byModel,
+      daily: dailyActivity(filtered, 7),
     };
   }, [messages, filter, modelLookup, providerLookup]);
 

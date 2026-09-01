@@ -14,7 +14,7 @@ import {
   estimateTokens,
   generateId,
 } from "@/lib/utils";
-import { playErrorSound, playFinishSound } from "@/hooks/useHaptics";
+import { playSound } from "@/hooks/useHaptics";
 import { renderMemoryPrompt, storeExplicitMemory } from "@/lib/memory";
 import {
   buildModeSystemPrompt,
@@ -23,9 +23,11 @@ import {
 import { reportAppError } from "@/lib/errors";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
+import { getActiveWorkspace } from "@/stores/workspaceStore";
 import { ipc, isTauri } from "@/lib/ipc";
 import {
   buildToolSystemPrompt,
@@ -83,6 +85,12 @@ async function resolveAttachedFolders(
   );
   if (explicit.length > 0) return explicit;
   if (!allowDefaultWorkspace) return [];
+  // A workspace with a folder is the sandbox root for its own work; only fall
+  // back to the process cwd when the workspace is a scratch one.
+  const workspaceFolder =
+    useToolRuntimeStore.getState().todoWorkspaceFolder ??
+    getActiveWorkspace().path;
+  if (workspaceFolder) return [workspaceFolder];
   const cwd = await getDefaultWorkspace();
   return cwd ? [cwd] : [];
 }
@@ -251,6 +259,8 @@ export const useChatStore = create<ChatState>()(
         .filter((call) => call.status === "pending" && !resolved.has(call.id));
       const runtime = useToolRuntimeStore.getState();
       runtime.clear();
+      // No sound here: restoring pending calls on a session switch is not a
+      // new request for attention, it is the same one being redrawn.
       runtime.queuePending(pending);
     },
 
@@ -282,6 +292,8 @@ export const useChatStore = create<ChatState>()(
         );
         return;
       }
+
+      playSound("send");
 
       const now = Date.now();
       const userMessage: Message = {
@@ -542,7 +554,7 @@ export const useChatStore = create<ChatState>()(
         if (message) {
           reportAppError(error, { category: "provider", source: "Chat generation" });
           toast.error("Generation failed", { description: message });
-          playErrorSound();
+          playSound("error");
         }
       } finally {
         activeAbort = null;
@@ -714,7 +726,7 @@ export const useChatStore = create<ChatState>()(
         if (message && !abort.signal.aborted) {
           reportAppError(error, { category: "provider", source: "Tool continuation" });
           toast.error("Generation failed", { description: message });
-          playErrorSound();
+          playSound("error");
         }
       } finally {
         activeAbort = null;
@@ -775,7 +787,7 @@ export const useChatStore = create<ChatState>()(
         set((state) => {
           delete state.toolLoopDepth[sessionId];
         });
-        playFinishSound();
+        playSound("complete");
         return;
       }
 
@@ -797,15 +809,24 @@ export const useChatStore = create<ChatState>()(
       }
 
       useToolRuntimeStore.getState().queuePending(pending);
+      // Waiting on the user is the one thing worth interrupting them for —
+      // but only when something is actually waiting. In auto-approve mode
+      // this list is empty and the run should stay silent.
+      if (pending.length > 0) playSound("notify");
       const visibleCalls = calls.map((call) =>
         toAutoApprove.some((approved) => approved.id === call.id)
           ? { ...call, status: "running" as const }
           : call,
       );
+      // Snapshot the terminal now: these calls belong to whatever Todo (if
+      // any) is running at this moment, and approval may not come for a while.
+      const toolTerminalId =
+        useToolRuntimeStore.getState().todoTerminalId ?? undefined;
       const updatedAssistant = {
         ...lastAssistant,
         toolCalls: visibleCalls,
         toolWorkspace: attachedFolders,
+        toolTerminalId,
       };
       set((state) => {
         const list = state.messagesBySession[sessionId];
@@ -814,7 +835,12 @@ export const useChatStore = create<ChatState>()(
       });
       await persistence.updateMessage(updatedAssistant);
 
-      const context: ToolContext = { attachedFolders };
+      const context: ToolContext = {
+        attachedFolders,
+        terminalId: toolTerminalId,
+        // Anything learned from these commands belongs to this project only.
+        workspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined,
+      };
       const executed = await Promise.all(
         toAutoApprove.map((call) => executeTool(call, context)),
       );
@@ -877,14 +903,24 @@ export const useChatStore = create<ChatState>()(
         source?.toolWorkspace?.length
           ? source.toolWorkspace
           : await resolveAttachedFolders(sessionId, [], true);
+      // Route to the terminal these calls were made for, not to whatever is
+      // running now — a blocked Todo may have finished long before this click.
+      const context: ToolContext = {
+        attachedFolders,
+        terminalId: source?.toolTerminalId,
+        workspaceId: useWorkspaceStore.getState().activeWorkspaceId ?? undefined,
+      };
       const results = await Promise.all(
-        approved.map((call) => executeTool(call, { attachedFolders })),
+        approved.map((call) => executeTool(call, context)),
       );
       await get().submitToolResults(sessionId, results, true);
     },
 
     submitToolResults: async (sessionId, results, shouldContinue = true) => {
       if (results.length === 0) return;
+      // One tick for the batch, not one per call: a loop of ten file reads
+      // should sound like work happening, not like a fault.
+      playSound("tool");
       const resultContent = results
         .map(serializeToolResult)
         .join("\n");
@@ -911,6 +947,7 @@ export const useChatStore = create<ChatState>()(
     },
 
     stopStreaming: () => {
+      if (activeAbort && !activeAbort.signal.aborted) playSound("cancel");
       activeAbort?.abort();
     },
 

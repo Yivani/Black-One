@@ -3,11 +3,14 @@ import { listen } from "@tauri-apps/api/event";
 import { Toaster, toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { SettingsModal } from "@/components/settings/SettingsModal";
+import { UpdateDialog } from "@/components/shared/UpdateDialog";
 import { CommandPalette } from "@/components/chat/CommandPalette";
 import { VibeHearts } from "@/components/chat/VibeHearts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHapticFeedback } from "@/hooks/useHaptics";
 import { useKeyboardShortcut, type ShortcutHandlers } from "@/hooks/useKeyboardShortcut";
+import { useSystemBridge } from "@/hooks/useSystemBridge";
+import { useMemorySaveToasts } from "@/components/memory/MemoryIndicator";
 import { toggleDarkMode, useResolvedDark, useTheme } from "@/hooks/useTheme";
 import { ipc, isTauri, type QuickChatPayload } from "@/lib/ipc";
 import { recoverExplicitMemories } from "@/lib/memory";
@@ -97,6 +100,8 @@ export function App() {
   useTheme();
   useHapticFeedback();
   useKeyboardShortcut(shortcutHandlers);
+  useSystemBridge();
+  useMemorySaveToasts();
   const settingsLoaded = useSettingsStore((s) => s.isLoaded);
   const quickChatShortcut = useSettingsStore(
     (s) => s.settings.shortcuts["quick-chat"],
@@ -188,13 +193,16 @@ export function App() {
     };
   }, [ready]);
 
+  const autoUpdateCheck = useSettingsStore(
+    (s) => s.settings.general.autoUpdateCheck,
+  );
   useEffect(() => {
-    if (!isTauri || !ready) return;
+    if (!isTauri || !ready || !autoUpdateCheck) return;
     const check = () => void useUpdateStore.getState().checkNow();
     check();
     const interval = setInterval(check, 15 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [ready]);
+  }, [ready, autoUpdateCheck]);
 
   const onboardingCompleted = useSettingsStore((s) => s.settings.onboardingCompleted);
 
@@ -213,6 +221,7 @@ export function App() {
     <>
       <AppShell />
       <SettingsModal />
+      <UpdateDialog />
       <CommandPalette />
       <VibeHearts />
       <Toaster position="bottom-right" closeButton theme={dark ? "dark" : "light"} />

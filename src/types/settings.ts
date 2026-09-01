@@ -1,3 +1,5 @@
+import type { LanguagePreference } from "@/lib/i18n";
+
 export type ThemeMode = "light" | "dark" | "system";
 export type FontSize = "small" | "medium" | "large";
 export type SidebarPosition = "left" | "right";
@@ -21,7 +23,14 @@ export type ContentFilterLevel = "off" | "moderate" | "strict";
 export type LogLevel = "error" | "warn" | "info" | "debug";
 export type SendShortcut = "enter" | "mod+enter";
 export type RejectionStyle = "brief" | "explained";
-export type ToolPermission = "ask" | "allowlisted" | "blocked";
+/**
+ * The single tool-permission vocabulary, shared by persisted settings and the
+ * runtime store. Kept identical to `ToolPermissionMode` in `@/lib/tools` so a
+ * mode can round-trip instead of being mapped onto a weaker one.
+ */
+export type ToolPermission = "manual" | "auto" | "yolo" | "blocked";
+/** Values written by releases before the vocabularies were merged. */
+export type LegacyToolPermission = "ask" | "allowlisted";
 export type ThemePresetId =
   | "default"
   | "ocean"
@@ -36,7 +45,14 @@ export type ThemePresetId =
   | "dracula"
   | "solarized"
   | "sakura"
-  | "amber";
+  | "amber"
+  | "midnight"
+  | "slate"
+  | "crimson"
+  | "vapor"
+  | "phosphor"
+  | "sage"
+  | "contrast";
 export type ChatPersonality =
   | "none"
   | "helpful"
@@ -51,6 +67,16 @@ export type ChatPersonality =
 export type ImageAttachmentMode = "auto" | "text-only" | "disabled";
 /** Reasoning-effort value accepted by the active model/provider. */
 export type EffortLevel = string;
+
+/** App-wide preferences that are not specific to chat, models, or looks. */
+export interface GeneralSettings {
+  /** UI language. "system" follows the OS/browser preference. */
+  language: LanguagePreference;
+  /** Whether the tray icon carries a colored activity dot. */
+  trayStatus: boolean;
+  /** Whether the app polls GitHub for a newer release in the background. */
+  autoUpdateCheck: boolean;
+}
 
 export interface ModelSettings {
   defaultModelId: string;
@@ -111,6 +137,11 @@ export interface MemorySettings {
   maxMemorySizeKb: number;
   /** Allowed memory categories. */
   memoryCategories: string[];
+  /**
+   * Markdown context files kept in sync with the bank so the terminal CLI
+   * agents can read it. Empty disables the sync entirely.
+   */
+  agentContextFiles: string[];
 }
 
 export interface AdvancedSettings {
@@ -125,6 +156,8 @@ export interface AdvancedSettings {
 
 export interface NotificationSettings {
   desktopEnabled: boolean;
+  /** Notify when the agent blocks on a tool approval. */
+  approvalsEnabled: boolean;
   soundsEnabled: boolean;
   soundName: string;
   dndEnabled: boolean;
@@ -136,9 +169,15 @@ export interface NotificationSettings {
 export interface HapticSettings {
   enabled: boolean;
   volume: number;
+  /** Optional custom files, kept for the three sounds that had them. */
   clickSound: string;
   finishSound: string;
   errorSound: string;
+  /** Sound families, each switchable on its own. See `soundCore.ts`. */
+  interfaceSounds: boolean;
+  messageSounds: boolean;
+  alertSounds: boolean;
+  activitySounds: boolean;
 }
 
 export interface ToolConfig {
@@ -163,6 +202,7 @@ export interface ArchiveSettings {
 }
 
 export interface AppSettings {
+  general: GeneralSettings;
   model: ModelSettings;
   chat: ChatSettings;
   appearance: AppearanceSettings;

@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Lime theme preset for Black One.
@@ -28,9 +28,9 @@ export const limeTheme: ThemePreset = {
     "--accent-foreground": "0 2% 11%",
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
-    "--border": "75 12% 88%",
-    "--input": "75 12% 90%",
-    "--ring": "78 95% 60%",
+    "--border": "75 12% 84%",
+    "--input": "75 12% 84%",
+    "--ring": "78 95% 31%",
   },
   dark: {
     "--background": "0 2% 11%",

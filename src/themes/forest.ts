@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Forest theme preset for Black One.
@@ -17,7 +17,7 @@ export const forestTheme: ThemePreset = {
     "--card-foreground": "120 25% 12%",
     "--popover": "120 20% 99%",
     "--popover-foreground": "120 25% 12%",
-    "--primary": "145 60% 35%",
+    "--primary": "145 60% 32.5%",
     "--primary-foreground": "0 0% 100%",
     "--secondary": "120 18% 92%",
     "--secondary-foreground": "120 25% 15%",
@@ -28,7 +28,7 @@ export const forestTheme: ThemePreset = {
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "120 15% 86%",
-    "--input": "120 15% 89%",
+    "--input": "120 15% 84%",
     "--ring": "145 60% 35%",
   },
   dark: {

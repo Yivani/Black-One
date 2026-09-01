@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { useSettings } from "@/hooks/useSettings";
+import { LANGUAGES, type LanguagePreference } from "@/lib/i18n";
 import { useResolvedDark } from "@/hooks/useTheme";
 import { ACCENT_COLORS, APP_NAME, APP_TAGLINE } from "@/lib/constants";
 import { CLI_TOOLS, type CliAction, type CliTool } from "@/lib/cliTools";
@@ -40,10 +41,19 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const LANGUAGE_OPTIONS: Array<{ id: string; label: string; flag: string; ready: boolean }> = [
-  { id: "en", label: "English", flag: "🇺🇸", ready: true },
-  { id: "de", label: "German", flag: "🇩🇪", ready: false },
-  { id: "es", label: "Spanish", flag: "🇪🇸", ready: false },
+/** Built from the shipped dictionaries, so a new locale appears here for free. */
+const LANGUAGE_OPTIONS: Array<{
+  id: LanguagePreference;
+  label: string;
+  /** Two-letter badge; Windows has no flag-emoji glyphs. */
+  code: string;
+}> = [
+  { id: "system", label: "Match system", code: "OS" },
+  ...LANGUAGES.map((language) => ({
+    id: language.id as LanguagePreference,
+    label: language.nativeLabel,
+    code: language.code,
+  })),
 ];
 
 const THEME_OPTIONS: Array<{ id: ThemeMode; label: string; icon: LucideIcon }> = [
@@ -146,7 +156,9 @@ export function OnboardingWizard() {
   const dark = useResolvedDark();
 
   const [step, setStep] = useState(0);
-  const [language, setLanguage] = useState("en");
+  const [language, setLanguage] = useState<LanguagePreference>(
+    settings.general.language,
+  );
   const [theme, setTheme] = useState<ThemeMode>(settings.appearance.theme);
   const [themePreset, setThemePreset] = useState<ThemePresetId>(settings.appearance.themePreset);
   const [accentColor, setAccentColor] = useState<AccentColorId>(settings.appearance.accentColor);
@@ -217,7 +229,8 @@ export function OnboardingWizard() {
     }
   };
 
-  const applyAppearance = () => {
+  const applyChoices = () => {
+    updateSection("general", { language });
     updateSection("appearance", {
       theme,
       themePreset,
@@ -227,12 +240,12 @@ export function OnboardingWizard() {
   };
 
   const handleFinish = () => {
-    applyAppearance();
+    applyChoices();
     updateSection("onboardingCompleted", true);
   };
 
   const handleSkip = () => {
-    applyAppearance();
+    applyChoices();
     updateSection("onboardingCompleted", true);
   };
 
@@ -296,30 +309,28 @@ export function OnboardingWizard() {
                   <Globe className="size-4 text-muted-foreground" aria-hidden />
                   <Label className="text-sm font-medium">Language</Label>
                 </div>
-                <div role="radiogroup" aria-label="Language" className="grid grid-cols-3 gap-3">
+                <div role="radiogroup" aria-label="Language" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {LANGUAGE_OPTIONS.map((option) => (
                     <button
                       key={option.id}
                       type="button"
                       role="radio"
                       aria-checked={language === option.id}
-                      disabled={!option.ready}
-                      onClick={() => option.ready && setLanguage(option.id)}
+                      onClick={() => setLanguage(option.id)}
                       className={cn(
                         "flex flex-col items-center gap-2 rounded-lg border border-border p-4 text-left transition-colors",
                         language === option.id
                           ? "border-primary ring-1 ring-primary"
                           : "hover:bg-accent/50",
-                        !option.ready && "cursor-not-allowed opacity-50",
                       )}
                     >
-                      <span className="text-2xl" aria-hidden>
-                        {option.flag}
+                      <span
+                        className="inline-flex h-7 min-w-9 items-center justify-center rounded border border-border bg-muted/60 px-2 font-mono text-xs font-semibold tracking-wide"
+                        aria-hidden
+                      >
+                        {option.code}
                       </span>
                       <span className="text-xs font-medium">{option.label}</span>
-                      {!option.ready && (
-                        <span className="text-[10px] text-muted-foreground">Coming soon</span>
-                      )}
                     </button>
                   ))}
                 </div>
@@ -559,7 +570,7 @@ export function OnboardingWizard() {
             {step < steps.length - 1 ? (
               <Button
                 onClick={() => {
-                  if (step === 2) applyAppearance();
+                  if (step === 2) applyChoices();
                   setStep((s) => s + 1);
                 }}
               >

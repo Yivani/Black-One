@@ -1,17 +1,24 @@
 import type { ThemePresetId } from "@/types/settings";
-import { amberTheme } from "@/themes/amber";
-import { berryTheme } from "@/themes/berry";
-import { coffeeTheme } from "@/themes/coffee";
-import { draculaTheme } from "@/themes/dracula";
-import { forestTheme } from "@/themes/forest";
-import { limeTheme } from "@/themes/lime";
-import { mintTheme } from "@/themes/mint";
-import { nordTheme } from "@/themes/nord";
-import { oceanTheme } from "@/themes/ocean";
-import { sakuraTheme } from "@/themes/sakura";
-import { solarizedTheme } from "@/themes/solarized";
-import { sunsetTheme } from "@/themes/sunset";
-import { warmTheme } from "@/themes/warm";
+import { amberTheme } from "../themes/amber.ts";
+import { berryTheme } from "../themes/berry.ts";
+import { coffeeTheme } from "../themes/coffee.ts";
+import { contrastTheme } from "../themes/contrast.ts";
+import { crimsonTheme } from "../themes/crimson.ts";
+import { draculaTheme } from "../themes/dracula.ts";
+import { forestTheme } from "../themes/forest.ts";
+import { limeTheme } from "../themes/lime.ts";
+import { midnightTheme } from "../themes/midnight.ts";
+import { mintTheme } from "../themes/mint.ts";
+import { nordTheme } from "../themes/nord.ts";
+import { oceanTheme } from "../themes/ocean.ts";
+import { phosphorTheme } from "../themes/phosphor.ts";
+import { sageTheme } from "../themes/sage.ts";
+import { sakuraTheme } from "../themes/sakura.ts";
+import { slateTheme } from "../themes/slate.ts";
+import { solarizedTheme } from "../themes/solarized.ts";
+import { sunsetTheme } from "../themes/sunset.ts";
+import { vaporTheme } from "../themes/vapor.ts";
+import { warmTheme } from "../themes/warm.ts";
 
 /**
  * Full-app theme preset definitions.
@@ -45,10 +52,10 @@ export const defaultTheme: ThemePreset = {
     "--secondary": "240 4.8% 95.9%",
     "--secondary-foreground": "240 5.9% 10%",
     "--muted": "240 4.8% 95.9%",
-    "--muted-foreground": "240 3.8% 46.1%",
+    "--muted-foreground": "240 3.8% 44%",
     "--accent": "240 4.8% 95.9%",
     "--accent-foreground": "240 5.9% 10%",
-    "--destructive": "0 84.2% 60.2%",
+    "--destructive": "0 84.2% 48%",
     "--destructive-foreground": "0 0% 98%",
     "--border": "240 5.9% 90%",
     "--input": "240 5.9% 90%",
@@ -90,4 +97,11 @@ export const THEME_PRESETS: ThemePreset[] = [
   solarizedTheme,
   sakuraTheme,
   amberTheme,
+  midnightTheme,
+  slateTheme,
+  crimsonTheme,
+  vaporTheme,
+  phosphorTheme,
+  sageTheme,
+  contrastTheme,
 ];

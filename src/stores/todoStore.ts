@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { playSound } from "@/hooks/useHaptics";
 import { generateId } from "@/lib/utils";
 import {
   moveTodo,
@@ -7,6 +8,7 @@ import {
   type TodoItem,
   type TodoPriority,
 } from "@/lib/todoCore";
+import { getActiveWorkspace, useWorkspaceStore } from "@/stores/workspaceStore";
 
 const STORAGE_KEY = "todo:board";
 
@@ -20,7 +22,7 @@ interface PersistedTodoState {
 interface TodoState extends PersistedTodoState {
   runnerActive: boolean;
   activeTodoId: string | null;
-  addTodo: (text: string, priority: TodoPriority) => void;
+  addTodo: (text: string, priority: TodoPriority, workspaceId?: string) => void;
   updateTodo: (id: string, patch: Partial<TodoItem>) => void;
   removeTodo: (id: string) => void;
   moveTodo: (
@@ -29,7 +31,10 @@ interface TodoState extends PersistedTodoState {
     overId?: string,
   ) => void;
   setPriorityModel: (priority: TodoPriority, modelId: string) => void;
-  clearCompleted: () => void;
+  /** Clears finished tasks in one workspace, leaving other boards untouched. */
+  clearCompleted: (workspaceId?: string) => void;
+  /** Drops every task belonging to a deleted workspace. */
+  removeWorkspaceTodos: (workspaceId: string) => void;
   setRunner: (active: boolean, todoId?: string | null) => void;
 }
 
@@ -78,17 +83,36 @@ function persist(state: TodoState): void {
   }
 }
 
-const initial = readPersisted();
+/**
+ * Boards existed before workspaces did. Tasks stored without one are adopted
+ * by the first workspace so nothing disappears from the board on upgrade.
+ */
+function createInitialState(): PersistedTodoState {
+  const stored = readPersisted();
+  const fallbackWorkspaceId = getActiveWorkspace().id;
+  return {
+    ...stored,
+    items: stored.items.map((item) =>
+      item.workspaceId ? item : { ...item, workspaceId: fallbackWorkspaceId },
+    ),
+  };
+}
 
 export const useTodoStore = create<TodoState>()(
   immer((set, get) => ({
-    ...initial,
+    ...createInitialState(),
     runnerActive: false,
     activeTodoId: null,
 
-    addTodo: (text, priority) => {
+    addTodo: (text, priority, workspaceId) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      const workspace = workspaceId ?? getActiveWorkspace().id;
+      // New tasks inherit the workspace's terminal so they run in the right
+      // shell without the user having to pick one every time.
+      const terminalId =
+        useWorkspaceStore.getState().defaultTerminalByWorkspace[workspace] ??
+        undefined;
       set((state) => {
         state.items.push({
           id: generateId(),
@@ -97,16 +121,23 @@ export const useTodoStore = create<TodoState>()(
           status: "queued",
           multiAgent: false,
           createdAt: Date.now(),
+          workspaceId: workspace,
+          terminalId,
         });
       });
       persist(get());
     },
 
     updateTodo: (id, patch) => {
+      let justFinished = false;
       set((state) => {
         const item = state.items.find((todo) => todo.id === id);
-        if (item) Object.assign(item, patch);
+        if (!item) return;
+        justFinished = patch.status === "done" && item.status !== "done";
+        Object.assign(item, patch);
       });
+      // Only the transition makes a sound; re-saving a finished todo does not.
+      if (justFinished) playSound("task");
       persist(get());
     },
 
@@ -131,9 +162,21 @@ export const useTodoStore = create<TodoState>()(
       persist(get());
     },
 
-    clearCompleted: () => {
+    clearCompleted: (workspaceId) => {
+      const scope = workspaceId ?? getActiveWorkspace().id;
       set((state) => {
-        state.items = state.items.filter((item) => item.status !== "done");
+        state.items = state.items.filter(
+          (item) => item.workspaceId !== scope || item.status !== "done",
+        );
+      });
+      persist(get());
+    },
+
+    removeWorkspaceTodos: (workspaceId) => {
+      set((state) => {
+        state.items = state.items.filter(
+          (item) => item.workspaceId !== workspaceId,
+        );
       });
       persist(get());
     },

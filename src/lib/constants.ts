@@ -24,10 +24,6 @@ export const SESSION_TITLE_MAX_LENGTH = 50;
 export const COMPOSER_PLACEHOLDER = "Describe what you need...";
 export const STREAM_FLUSH_INTERVAL_MS = 32;
 
-export const DEMO_PROVIDER_ID = "demo";
-export const DEMO_MODEL_ID = "demo/black-one-demo";
-export const DEMO_MODEL_NAME = "Black One";
-
 export const FONT_SIZE_SCALE: Record<FontSize, string> = {
   small: "13px",
   medium: "14px",
@@ -54,13 +50,13 @@ export const ACCENT_COLORS: AccentPreset[] = [
   { id: "violet", label: "Iris", light: "262 45% 52%", dark: "262 60% 70%" },
   { id: "pink", label: "Pink", light: "330 65% 55%", dark: "330 75% 70%" },
   { id: "red", label: "Crimson", light: "0 72% 51%", dark: "0 80% 65%" },
-  { id: "orange", label: "Orange", light: "24 85% 50%", dark: "24 90% 60%" },
+  { id: "orange", label: "Orange", light: "24 85% 48%", dark: "24 90% 60%" },
   { id: "amber", label: "Ochre", light: "32 75% 42%", dark: "38 80% 60%" },
   { id: "green", label: "Moss", light: "152 45% 36%", dark: "152 50% 58%" },
   { id: "teal", label: "Teal", light: "175 55% 38%", dark: "175 65% 55%" },
-  { id: "cyan", label: "Cyan", light: "190 80% 40%", dark: "190 85% 55%" },
+  { id: "cyan", label: "Cyan", light: "190 80% 38%", dark: "190 85% 55%" },
   { id: "rose", label: "Rose", light: "346 75% 54%", dark: "346 80% 67%" },
-  { id: "sky", label: "Sky", light: "199 89% 48%", dark: "199 90% 62%" },
+  { id: "sky", label: "Sky", light: "199 89% 43%", dark: "199 90% 62%" },
 ];
 
 export const NOTIFICATION_SOUNDS = ["chime", "pop", "ding"] as const;
@@ -113,26 +109,6 @@ function mp(inputPrice: number, outputPrice: number, currency = "USD") {
 }
 
 export const DEFAULT_PROVIDERS: Provider[] = [
-  {
-    id: DEMO_PROVIDER_ID,
-    name: "Black One",
-    type: "demo",
-    baseUrl: "",
-    isEnabled: true,
-    hasApiKey: false,
-    models: [
-      {
-        id: DEMO_MODEL_ID,
-        name: DEMO_MODEL_NAME,
-        providerId: DEMO_PROVIDER_ID,
-        contextWindow: 32_768,
-        capabilities: ["streaming", "tools"],
-        description:
-          "Built-in offline demo model. Streams realistic responses without any API key.",
-        pricing: mp(0, 0),
-      },
-    ],
-  },
   {
     id: "openai",
     name: "OpenAI (Codex)",
@@ -447,8 +423,13 @@ export const DEFAULT_PROVIDERS: Provider[] = [
 ];
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  general: {
+    language: "system",
+    trayStatus: true,
+    autoUpdateCheck: true,
+  },
   model: {
-    defaultModelId: DEMO_MODEL_ID,
+    defaultModelId: "",
     visibleModelIds: null,
     temperature: 0.7,
     maxTokens: 4096,
@@ -497,8 +478,18 @@ export const DEFAULT_SETTINGS: AppSettings = {
       "writing_style",
       "goals",
       "relationships",
+      // Filled by watching the terminal rather than by conversation.
+      "commands",
+      "toolchain",
+      "environment",
+      "conventions",
       "other",
     ],
+    // Every context file a supported agent reads. Leaving one off means that
+    // agent silently remembers nothing, which is how Gemini CLI was missed.
+    // Littering is not a risk: a file is only ever created once the bank has
+    // something in it, and only the region between our markers is written.
+    agentContextFiles: ["AGENTS.md", "CLAUDE.md", "GEMINI.md"],
   },
   advanced: {
     developerMode: false,
@@ -511,6 +502,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   notifications: {
     desktopEnabled: true,
+    approvalsEnabled: true,
     soundsEnabled: false,
     soundName: "chime",
     dndEnabled: false,
@@ -523,9 +515,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
     clickSound: "default",
     finishSound: "default",
     errorSound: "default",
+    // Everything on by default: the sounds are quiet and short enough that
+    // the honest default is to let someone hear the set and switch off what
+    // they do not want, rather than hide it behind a setting nobody finds.
+    interfaceSounds: true,
+    messageSounds: true,
+    alertSounds: true,
+    activitySounds: true,
   },
   tools: {
-    permission: "allowlisted",
+    permission: "auto",
     fileToolsEnabled: true,
     shellToolsEnabled: true,
     tools: [],

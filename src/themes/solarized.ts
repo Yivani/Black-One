@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Solarized theme preset for Black One.
@@ -17,15 +17,15 @@ export const solarizedTheme: ThemePreset = {
     "--card-foreground": "196 13% 22%",
     "--popover": "44 50% 98%",
     "--popover-foreground": "196 13% 22%",
-    "--primary": "18 80% 44%",
+    "--primary": "18 80% 41.5%",
     "--primary-foreground": "44 50% 95%",
     "--secondary": "44 40% 90%",
     "--secondary-foreground": "196 13% 22%",
     "--muted": "44 35% 88%",
-    "--muted-foreground": "196 10% 40%",
+    "--muted-foreground": "196 10% 39%",
     "--accent": "68 100% 30%",
-    "--accent-foreground": "44 50% 95%",
-    "--destructive": "1 71% 52%",
+    "--accent-foreground": "44 35% 13%",
+    "--destructive": "1 71% 49%",
     "--destructive-foreground": "44 50% 95%",
     "--border": "44 30% 80%",
     "--input": "44 30% 83%",
@@ -43,13 +43,13 @@ export const solarizedTheme: ThemePreset = {
     "--secondary": "192 30% 20%",
     "--secondary-foreground": "44 40% 86%",
     "--muted": "192 25% 18%",
-    "--muted-foreground": "44 20% 55%",
+    "--muted-foreground": "44 20% 58%",
     "--accent": "18 80% 50%",
-    "--accent-foreground": "44 50% 95%",
-    "--destructive": "1 71% 52%",
+    "--accent-foreground": "44 35% 9.5%",
+    "--destructive": "1 71% 49%",
     "--destructive-foreground": "44 50% 95%",
-    "--border": "192 25% 24%",
-    "--input": "192 25% 22%",
+    "--border": "192 25% 26%",
+    "--input": "192 25% 24%",
     "--ring": "175 59% 47%",
   },
 };

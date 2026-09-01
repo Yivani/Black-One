@@ -1,4 +1,4 @@
-import { ThemePreset } from "@/lib/themes";
+import type { ThemePreset } from "@/lib/themes";
 
 /**
  * Sunset theme preset for Black One.
@@ -17,7 +17,7 @@ export const sunsetTheme: ThemePreset = {
     "--card-foreground": "15 25% 15%",
     "--popover": "25 30% 99%",
     "--popover-foreground": "15 25% 15%",
-    "--primary": "350 75% 55%",
+    "--primary": "350 75% 51.5%",
     "--primary-foreground": "0 0% 100%",
     "--secondary": "25 22% 92%",
     "--secondary-foreground": "15 25% 15%",
@@ -28,7 +28,7 @@ export const sunsetTheme: ThemePreset = {
     "--destructive": "0 72% 51%",
     "--destructive-foreground": "0 0% 100%",
     "--border": "25 15% 86%",
-    "--input": "25 15% 89%",
+    "--input": "25 15% 85%",
     "--ring": "350 75% 55%",
   },
   dark: {
