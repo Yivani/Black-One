@@ -11,3 +11,5 @@ src-tauri/gen
 latest.json
 Analyse.md
 PRODUCT.md
+*.mp4
+*.mov
