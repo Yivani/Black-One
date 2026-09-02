@@ -50,3 +50,9 @@ pub fn close_terminal(state: State<'_, AppState>, id: String) -> Result<(), AppE
 pub fn list_terminals(state: State<'_, AppState>) -> Result<Vec<TerminalSummary>, AppError> {
     state.terminals.list()
 }
+
+/// True when something other than the shell prompt would receive a write.
+#[tauri::command]
+pub fn terminal_busy(state: State<'_, AppState>, id: String) -> Result<bool, AppError> {
+    state.terminals.busy(&id)
+}

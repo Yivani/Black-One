@@ -378,6 +378,7 @@ pub fn run() {
             commands::terminal::resize_terminal,
             commands::terminal::close_terminal,
             commands::terminal::list_terminals,
+            commands::terminal::terminal_busy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Black One");

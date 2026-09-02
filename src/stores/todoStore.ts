@@ -22,6 +22,12 @@ interface PersistedTodoState {
 
 interface TodoState extends PersistedTodoState {
   runnerActive: boolean;
+  /**
+   * Set between asking the runner to stop and it actually unwinding. The
+   * runner stays "active" throughout, so a second one cannot be started into
+   * the same terminal while the first is still interrupting its command.
+   */
+  stopping: boolean;
   activeTodoId: string | null;
   addTodo: (text: string, priority: TodoPriority, workspaceId?: string) => void;
   updateTodo: (id: string, patch: Partial<TodoItem>) => void;
@@ -42,6 +48,7 @@ interface TodoState extends PersistedTodoState {
   /** Drops every task belonging to a deleted workspace. */
   removeWorkspaceTodos: (workspaceId: string) => void;
   setRunner: (active: boolean, todoId?: string | null) => void;
+  setStopping: (stopping: boolean) => void;
 }
 
 const emptyModels = Object.fromEntries(
@@ -108,6 +115,7 @@ export const useTodoStore = create<TodoState>()(
   immer((set, get) => ({
     ...createInitialState(),
     runnerActive: false,
+    stopping: false,
     activeTodoId: null,
 
     addTodo: (text, priority, workspaceId) => {
@@ -200,6 +208,13 @@ export const useTodoStore = create<TodoState>()(
       set((state) => {
         state.runnerActive = active;
         state.activeTodoId = active ? todoId : null;
+        if (!active) state.stopping = false;
+      });
+    },
+
+    setStopping: (stopping) => {
+      set((state) => {
+        state.stopping = stopping;
       });
     },
   })),

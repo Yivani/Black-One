@@ -43,6 +43,11 @@ export interface ToolContext {
   terminalId?: string;
   /** Longer-running callers such as Todo CLI agents may raise the PTY cap. */
   timeoutMs?: number;
+  /**
+   * Aborts a command that is already running in a terminal. Without one, a
+   * Todo agent holding the shell can only be waited out.
+   */
+  signal?: AbortSignal;
   /** Scopes anything learned from a command to the workspace that ran it. */
   workspaceId?: string;
 }
@@ -322,6 +327,7 @@ function awaitTerminalCommand(
   terminalId: string,
   script: TerminalScript,
   timeoutMs = TERMINAL_COMMAND_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<TerminalShellResult> {
   return new Promise<TerminalShellResult>((resolve) => {
     let buffer = "";
@@ -339,8 +345,24 @@ function awaitTerminalCommand(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
       unsubscribe();
       resolve(result);
+    };
+
+    // Stopping interrupts the command in the user's shell and returns straight
+    // away. Waiting for the interrupted program to print a sentinel it may
+    // never print is what made Stop look like it did nothing.
+    const onAbort = () => {
+      if (useTerminalStore.getState().isTerminalLive(terminalId)) {
+        void ipc.writeTerminal(terminalId, TERMINAL_INTERRUPT);
+      }
+      finish({
+        stdout: parseTerminalOutput(captured(), script)?.output ?? "",
+        stderr: "Stopped.",
+        exitCode: null,
+        timedOut: false,
+      });
     };
 
     const timeout = setTimeout(() => {
@@ -404,8 +426,38 @@ function awaitTerminalCommand(
       },
     );
 
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     void ipc.writeTerminal(terminalId, `${script.script}\n`);
   });
+}
+
+/** How long to wait before confirming that a terminal is really occupied. */
+const BUSY_RECHECK_MS = 250;
+
+/**
+ * Whether something other than the shell prompt would receive a write.
+ *
+ * Sampled twice. A prompt function that shells out to git puts a child under
+ * the shell for a few milliseconds, and failing a task over that would be
+ * worse than the problem being solved; a shell hosting an agent is busy on
+ * both reads.
+ *
+ * A probe that cannot answer must not block the terminal: an older backend
+ * without the command, or a session that just closed, both report idle and
+ * leave the existing checks to catch a bad write.
+ */
+async function isTerminalBusy(terminalId: string): Promise<boolean> {
+  try {
+    if (!(await ipc.terminalBusy(terminalId))) return false;
+    await new Promise((resolve) => setTimeout(resolve, BUSY_RECHECK_MS));
+    return await ipc.terminalBusy(terminalId);
+  } catch {
+    return false;
+  }
 }
 
 async function executeShellCommandInTerminal(
@@ -414,6 +466,7 @@ async function executeShellCommandInTerminal(
   cwd: string,
   roots: string[],
   timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<TerminalShellResult> {
   const terminal = useTerminalStore
     .getState()
@@ -457,9 +510,24 @@ async function executeShellCommandInTerminal(
     token: generateId(),
   });
 
-  return runExclusively(terminalId, () =>
-    awaitTerminalCommand(terminalId, script, timeoutMs),
-  );
+  // The busy check belongs inside the queue, not before it: a command waiting
+  // its turn would otherwise see the *previous* command's child process and
+  // report the terminal occupied by something the user did not start.
+  return runExclusively(terminalId, async () => {
+    // A script is only a script at a shell prompt. When a full-screen agent is
+    // running in this terminal, the same bytes are typed into *its* input box
+    // — which is how a Todo used to paste a page of PowerShell into a running
+    // Kimi or Claude session instead of executing anything.
+    if (await isTerminalBusy(terminalId)) {
+      return {
+        stdout: "",
+        stderr: `The shell in "${terminal.title}" is busy running another program. Wait for it to finish, or choose an idle terminal.`,
+        exitCode: 1,
+        timedOut: false,
+      };
+    }
+    return awaitTerminalCommand(terminalId, script, timeoutMs, signal);
+  });
 }
 
 export async function executeTool(
@@ -552,6 +620,7 @@ export async function executeTool(
               cwd,
               roots,
               context.timeoutMs,
+              context.signal,
             )
           : await ipc.executeShellCommand(call.args.command, cwd, roots);
         // Learn from what actually ran. Extraction is synchronous and usually

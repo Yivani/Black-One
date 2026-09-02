@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::ipc::Channel;
 
 use crate::utils::AppError;
@@ -221,6 +222,15 @@ fn title_for_shell(shell: &Shell, cwd: Option<&str>) -> String {
 
 type Sessions = Arc<Mutex<HashMap<String, TerminalSession>>>;
 
+/// Whether any live process reports `shell_pid` as its parent.
+fn has_live_child(system: &System, shell_pid: u32) -> bool {
+    let parent = sysinfo::Pid::from_u32(shell_pid);
+    system
+        .processes()
+        .values()
+        .any(|process| process.parent() == Some(parent))
+}
+
 #[derive(Default)]
 pub struct TerminalManager {
     /// Shared with each session's reader thread so a shell that exits can drop
@@ -359,6 +369,43 @@ impl TerminalManager {
         Ok(summary)
     }
 
+    /// Whether a program other than the shell itself is running in a terminal.
+    ///
+    /// The tool runtime writes a script into a live PTY and waits for its
+    /// sentinels. That only works at a shell prompt: when a full-screen agent
+    /// like Kimi Code or Claude Code is running, the script is typed into
+    /// *its* input box instead of being executed, which is how a Todo used to
+    /// dump a page of PowerShell into a running agent's prompt.
+    ///
+    /// A shell with any live child process is treated as busy. That is exactly
+    /// the condition under which a write reaches something other than the
+    /// shell's own command line.
+    pub fn busy(&self, id: &str) -> Result<bool, AppError> {
+        let shell_pid = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+            let session = sessions
+                .get(id)
+                .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+            // A shell whose pid is unknown cannot be inspected. Reporting it
+            // idle keeps the terminal usable rather than blocking every write.
+            match session.child.process_id() {
+                Some(pid) => pid,
+                None => return Ok(false),
+            }
+        };
+
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        Ok(has_live_child(&system, shell_pid))
+    }
+
     /// Writes to a terminal, failing when it is gone.
     ///
     /// Unlike `resize`, this stays loud: the tool runtime writes a script and
@@ -477,6 +524,56 @@ mod tests {
             matches!(error, AppError::NotFound(_)),
             "the tool runtime waits on a sentinel and must learn the write was dropped",
         );
+    }
+
+    fn scan() -> System {
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        system
+    }
+
+    /// The guard behind "do not write into a busy terminal": a shell running
+    /// an agent has a child, an idle one does not.
+    #[test]
+    fn a_process_with_a_live_child_reads_as_busy() {
+        let mut child = std::process::Command::new(if cfg!(windows) {
+            "cmd"
+        } else {
+            "sh"
+        })
+        .args(if cfg!(windows) {
+            ["/c", "pause"]
+        } else {
+            ["-c", "read x"]
+        })
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("spawning a short-lived child");
+
+        assert!(has_live_child(&scan(), std::process::id()));
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn an_unknown_pid_has_no_children() {
+        // Reserved on every supported platform, so nothing can be parented to it.
+        assert!(!has_live_child(&scan(), u32::MAX));
+    }
+
+    #[test]
+    fn a_missing_terminal_reports_not_found_rather_than_idle() {
+        let manager = TerminalManager::new();
+        assert!(matches!(
+            manager.busy("does-not-exist"),
+            Err(AppError::NotFound(_))
+        ));
     }
 
     #[test]

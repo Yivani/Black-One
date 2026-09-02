@@ -5,10 +5,10 @@ import {
   Circle,
   GripVertical,
   Loader2,
-  Pause,
   Play,
   Plus,
   RotateCcw,
+  Square,
   Terminal,
   Trash2,
   Users,
@@ -514,8 +514,14 @@ function PriorityLane({
   );
 }
 
-type RunResult = "done" | "error";
+type RunResult = "done" | "error" | "stopped";
 const TODO_CLI_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * The run in flight, so Stop can interrupt the CLI agent holding the terminal
+ * instead of waiting out its ten-minute timeout.
+ */
+let activeRun: AbortController | null = null;
 
 function selectedCliId(
   selection: string | null,
@@ -529,6 +535,7 @@ function selectedCliId(
 async function executeTodo(
   todoId: string,
   installedIds: ReadonlySet<CliToolId>,
+  signal: AbortSignal,
 ): Promise<RunResult> {
   const todoStore = useTodoStore.getState();
   const item = todoStore.items.find((todo) => todo.id === todoId);
@@ -582,8 +589,20 @@ async function executeTodo(
   }
   terminalStore.setActiveTerminal(todoTerminalId);
 
+  // A stopped task goes back to the queue rather than to an error: nothing
+  // went wrong, and Start work should pick it up again where it left off.
+  const requeue = () => {
+    todoStore.updateTodo(todoId, {
+      status: "queued",
+      pass: undefined,
+      error: undefined,
+    });
+    return "stopped" as const;
+  };
+
   const passes = item.multiAgent ? 2 : 1;
   for (let pass = 1; pass <= passes; pass += 1) {
+    if (signal.aborted) return requeue();
     const prompt =
       pass === 2
         ? `Review the current workspace after another CLI agent worked on this Todo. Fix anything incomplete, verify the result, then finish: ${item.text}`
@@ -607,6 +626,7 @@ async function executeTodo(
         status: "approved",
       },
       {
+        signal,
         attachedFolders: workspace?.path ? [workspace.path] : [],
         cwd:
           workspace?.path ??
@@ -618,6 +638,7 @@ async function executeTodo(
         workspaceId,
       },
     );
+    if (signal.aborted) return requeue();
     if (!result.result?.success) {
       todoStore.updateTodo(todoId, {
         status: "error",
@@ -639,14 +660,16 @@ async function executeTodo(
 
 async function runQueue(installedIds: ReadonlySet<CliToolId>): Promise<void> {
   const store = useTodoStore.getState();
-  if (store.runnerActive) return;
+  if (store.runnerActive || activeRun) return;
   // A runner works one workspace at a time: the board currently in view.
   // Other boards stay queued until switched to.
   const workspaceId = getActiveWorkspace().id;
+  const controller = new AbortController();
+  activeRun = controller;
   store.setRunner(true);
 
   try {
-    while (useTodoStore.getState().runnerActive) {
+    while (useTodoStore.getState().runnerActive && !controller.signal.aborted) {
       const next = getNextTodo(
         useTodoStore
           .getState()
@@ -655,7 +678,7 @@ async function runQueue(installedIds: ReadonlySet<CliToolId>): Promise<void> {
       if (!next) break;
       useTodoStore.getState().setRunner(true, next.id);
       try {
-        const result = await executeTodo(next.id, installedIds);
+        const result = await executeTodo(next.id, installedIds, controller.signal);
         if (result !== "done") break;
       } catch (error) {
         useTodoStore.getState().updateTodo(next.id, {
@@ -666,16 +689,33 @@ async function runQueue(installedIds: ReadonlySet<CliToolId>): Promise<void> {
       }
     }
   } finally {
+    activeRun = null;
     useTodoStore.getState().setRunner(false);
   }
+}
+
+/**
+ * Interrupts the running CLI agent and unwinds the queue.
+ *
+ * The runner stays marked active until it has actually unwound, so Start work
+ * cannot launch a second one into the same terminal in the meantime.
+ */
+function stopQueue(): void {
+  if (!activeRun) {
+    useTodoStore.getState().setRunner(false);
+    return;
+  }
+  useTodoStore.getState().setStopping(true);
+  activeRun.abort();
 }
 
 export function TodoView() {
   const items = useWorkspaceTodos();
   const workspace = useActiveWorkspace();
   const runnerActive = useTodoStore((state) => state.runnerActive);
+  const stopping = useTodoStore((state) => state.stopping);
   const activeTodoId = useTodoStore((state) => state.activeTodoId);
-  const setRunner = useTodoStore((state) => state.setRunner);
+
   const clearCompleted = useTodoStore((state) => state.clearCompleted);
   const moveTodo = useTodoStore((state) => state.moveTodo);
   const modelByPriority = useTodoStore(
@@ -840,11 +880,12 @@ export function TodoView() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setRunner(false)}
+              onClick={stopQueue}
+              disabled={stopping}
               className="gap-1.5"
             >
-              <Pause className="size-3.5" aria-hidden />
-              Pause after task
+              <Square className="size-3.5" aria-hidden />
+              {stopping ? "Stopping..." : "Stop"}
             </Button>
           ) : (
             // A disabled button swallows its own tooltip, so the wrapper carries it.
@@ -867,7 +908,8 @@ export function TodoView() {
           {runnerActive && active ? (
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Bot className="size-3.5" aria-hidden />
-              Working on {PRIORITY_META[active.priority].label}: {active.text}
+              {stopping ? "Stopping" : "Working on"}{" "}
+              {PRIORITY_META[active.priority].label}: {active.text}
             </p>
           ) : cliLoading ? (
             <p className="text-xs text-muted-foreground">

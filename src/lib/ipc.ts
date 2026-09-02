@@ -367,6 +367,8 @@ export const ipc = {
     invokeTauri<void>("resize_terminal", { id, cols, rows }),
   closeTerminal: (id: string) => invokeTauri<void>("close_terminal", { id }),
   listTerminals: () => invokeTauri<TerminalSummary[]>("list_terminals"),
+  /** True when a program other than the shell prompt would receive a write. */
+  terminalBusy: (id: string) => invokeTauri<boolean>("terminal_busy", { id }),
 };
 
 // Terminal output is streamed through a Tauri Channel registered at app
