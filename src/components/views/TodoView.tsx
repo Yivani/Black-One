@@ -9,13 +9,11 @@ import {
   Play,
   Plus,
   RotateCcw,
-  ShieldAlert,
   Terminal,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
 import {
   DndContext,
   DragOverlay,
@@ -46,20 +44,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { cn, generateId } from "@/lib/utils";
 import {
   getNextTodo,
-  getTodoToolRequirement,
   TODO_PRIORITIES,
   type TodoItem,
   type TodoPriority,
 } from "@/lib/todoCore";
-import { isIncompleteAgentResponse } from "@/lib/modePrompt";
-import { useChatStore } from "@/stores/chatStore";
-import { useModelStore } from "@/stores/modelStore";
-import { useSessionStore } from "@/stores/sessionStore";
+import {
+  CLI_TOOLS,
+  buildCliTaskCommand,
+  type CliTool,
+  type CliToolId,
+} from "@/lib/cliTools";
+import { ipc, isTauri, type CliToolStatus } from "@/lib/ipc";
+import { executeTool } from "@/lib/tools";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { useUiStore } from "@/stores/uiStore";
 import { getActiveWorkspace, useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   useActiveWorkspace,
@@ -69,9 +71,6 @@ import {
 import { resolveTaskTerminal } from "@/lib/workspaceCore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
-import type { Message } from "@/types/chat";
-
-const EMPTY_MESSAGES: Message[] = [];
 
 const PRIORITY_META: Record<
   TodoPriority,
@@ -103,67 +102,45 @@ const PRIORITY_META: Record<
   },
 };
 
-function PriorityModelSelect({ priority }: { priority: TodoPriority }) {
-  const providers = useModelStore((state) => state.providers);
-  const defaultModelId = useModelStore((state) => state.selectedModelId);
+function PriorityAgentSelect({
+  priority,
+  agents,
+  loading,
+}: {
+  priority: TodoPriority;
+  agents: CliTool[];
+  loading: boolean;
+}) {
   const configured = useTodoStore(
     (state) => state.modelByPriority[priority],
   );
   const setPriorityModel = useTodoStore((state) => state.setPriorityModel);
-  const visibleModelIds = useSettingsStore(
-    (state) => state.settings.model.visibleModelIds,
-  );
-  const visible = useMemo(
-    () => (visibleModelIds ? new Set(visibleModelIds) : null),
-    [visibleModelIds],
-  );
-  const activeModelId = configured ?? defaultModelId;
-  const groups = providers
-    .filter(
-      (provider) =>
-        provider.isEnabled ||
-        provider.models.some(
-          (model) =>
-            (model.selectionId ?? `${provider.id}::${model.id}`) ===
-            activeModelId,
-        ),
-    )
-    .map((provider) => ({
-      provider,
-      models: provider.models.filter((model) => {
-        const id = model.selectionId ?? `${provider.id}::${model.id}`;
-        return !visible || visible.has(id) || id === configured;
-      }),
-    }))
-    .filter((group) => group.models.length > 0);
+  const active = agents.find((agent) => configured === `cli::${agent.id}`);
 
   return (
     <Select
-      value={configured ?? defaultModelId}
+      value={active ? `cli::${active.id}` : undefined}
       onValueChange={(modelId) => setPriorityModel(priority, modelId)}
+      disabled={loading || agents.length === 0}
     >
       <SelectTrigger
         size="sm"
         className="h-7 min-w-0 border-0 bg-transparent px-0 text-xs shadow-none focus-visible:ring-1"
-        aria-label={`${PRIORITY_META[priority].label} priority model`}
+        aria-label={`${PRIORITY_META[priority].label} priority CLI agent`}
       >
-        <SelectValue placeholder="Choose model" />
+        <SelectValue
+          placeholder={loading ? "Checking agents..." : "Choose agent"}
+        />
       </SelectTrigger>
       <SelectContent>
-        {groups.map(({ provider, models }) => (
-          <SelectGroup key={provider.id}>
-            <SelectLabel>{provider.name}</SelectLabel>
-            {models.map((model) => {
-              const id =
-                model.selectionId ?? `${provider.id}::${model.id}`;
-              return (
-                <SelectItem key={id} value={id}>
-                  {model.name}
-                </SelectItem>
-              );
-            })}
-          </SelectGroup>
-        ))}
+        <SelectGroup>
+          <SelectLabel>Installed CLI agents</SelectLabel>
+          {agents.map((agent) => (
+            <SelectItem key={agent.id} value={`cli::${agent.id}`}>
+              {agent.name}
+            </SelectItem>
+          ))}
+        </SelectGroup>
       </SelectContent>
     </Select>
   );
@@ -218,19 +195,16 @@ function TodoStatus({ item }: { item: TodoItem }) {
       </span>
     );
   }
-  if (item.status === "blocked") {
-    return (
-      <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-        <ShieldAlert className="size-3" aria-hidden />
-        Approval needed
-      </span>
-    );
-  }
   if (item.status === "error") {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-destructive">
-        <X className="size-3" aria-hidden />
-        {item.error ?? "Work stopped"}
+      <span
+        className="flex min-w-0 items-start gap-1.5 text-xs text-destructive"
+        title={item.error}
+      >
+        <X className="mt-0.5 size-3 shrink-0" aria-hidden />
+        <span className="line-clamp-2 break-words">
+          {item.error ?? "Work stopped"}
+        </span>
       </span>
     );
   }
@@ -281,21 +255,7 @@ function TodoCard({ item }: { item: TodoItem }) {
   const updateTodo = useTodoStore((state) => state.updateTodo);
   const moveTodo = useTodoStore((state) => state.moveTodo);
   const removeTodo = useTodoStore((state) => state.removeTodo);
-  const sessionMessages = useChatStore((state) =>
-    item.sessionId
-      ? (state.messagesBySession[item.sessionId] ?? EMPTY_MESSAGES)
-      : EMPTY_MESSAGES,
-  );
-  const streamingSessionId = useChatStore(
-    (state) => state.streamingSessionId,
-  );
-  const toolLoopDepth = useChatStore((state) =>
-    item.sessionId ? state.toolLoopDepth[item.sessionId] : undefined,
-  );
-  const pendingApprovals = useToolRuntimeStore(
-    (state) => state.pendingCalls.length,
-  );
-  const busy = item.status === "working" || item.status === "blocked";
+  const busy = item.status === "working";
   const {
     attributes,
     listeners,
@@ -313,84 +273,6 @@ function TodoCard({ item }: { item: TodoItem }) {
     }
     if (trimmed !== item.text) updateTodo(item.id, { text: trimmed });
   };
-  const lastAssistant = [...sessionMessages]
-    .reverse()
-    .find((message) => message.role === "assistant");
-  const canResumeBlocked =
-    item.status === "blocked" &&
-    Boolean(item.sessionId) &&
-    pendingApprovals === 0 &&
-    streamingSessionId !== item.sessionId &&
-    toolLoopDepth === undefined &&
-    Boolean(
-      lastAssistant && lastAssistant.id !== item.blockedMessageId,
-    );
-
-  const resumeBlocked = () => {
-    if (!canResumeBlocked || !lastAssistant) return;
-    if (lastAssistant.status !== "complete") {
-      updateTodo(item.id, {
-        status: "error",
-        error: lastAssistant.errorMessage ?? "Work did not finish",
-        blockedMessageId: undefined,
-      });
-      return;
-    }
-    if (
-      isIncompleteAgentResponse(
-        lastAssistant.content,
-        lastAssistant.reasoning,
-      )
-    ) {
-      updateTodo(item.id, {
-        status: "error",
-        error: "Work stopped after describing the task",
-        blockedMessageId: undefined,
-      });
-      return;
-    }
-    const blockedIndex = sessionMessages.findIndex(
-      (message) => message.id === item.blockedMessageId,
-    );
-    const resumedMessages =
-      blockedIndex >= 0 ? sessionMessages.slice(blockedIndex + 1) : [];
-    if (
-      !hasTodoToolEvidence(
-        item.text,
-        resumedMessages,
-        (item.pass ?? 1) > 1,
-      )
-    ) {
-      updateTodo(item.id, {
-        status: "error",
-        error:
-          getTodoToolRequirement(item.text) === "change"
-            ? "No workspace change was executed"
-            : "No workspace inspection was executed",
-        blockedMessageId: undefined,
-      });
-      return;
-    }
-    if (item.multiAgent && (item.pass ?? 1) < 2) {
-      updateTodo(item.id, {
-        status: "queued",
-        error: undefined,
-        blockedMessageId: undefined,
-      });
-      void runQueue();
-      return;
-    }
-    updateTodo(item.id, {
-      status: "done",
-      error: undefined,
-      blockedMessageId: undefined,
-    });
-  };
-
-  useEffect(() => {
-    if (canResumeBlocked) resumeBlocked();
-  }, [canResumeBlocked, lastAssistant?.id]);
-
   return (
     <article
       ref={setNodeRef}
@@ -470,23 +352,6 @@ function TodoCard({ item }: { item: TodoItem }) {
               <RotateCcw className="size-3.5" aria-hidden />
             </Button>
           )}
-          {item.status === "blocked" && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-6 text-muted-foreground"
-              onClick={resumeBlocked}
-              disabled={!canResumeBlocked}
-              aria-label={
-                canResumeBlocked
-                  ? `Resume ${item.text} after approval`
-                  : `Waiting for approval work on ${item.text}`
-              }
-            >
-              <Play className="size-3.5" aria-hidden />
-            </Button>
-          )}
           <Button
             type="button"
             variant="ghost"
@@ -559,9 +424,13 @@ function TodoCard({ item }: { item: TodoItem }) {
 function PriorityLane({
   priority,
   items,
+  agents,
+  agentsLoading,
 }: {
   priority: TodoPriority;
   items: TodoItem[];
+  agents: CliTool[];
+  agentsLoading: boolean;
 }) {
   const [text, setText] = useState("");
   const addTodo = useTodoStore((state) => state.addTodo);
@@ -591,7 +460,11 @@ function PriorityLane({
           </span>
         </div>
         <div className="mt-1.5">
-          <PriorityModelSelect priority={priority} />
+          <PriorityAgentSelect
+            priority={priority}
+            agents={agents}
+            loading={agentsLoading}
+          />
         </div>
       </header>
 
@@ -641,185 +514,134 @@ function PriorityLane({
   );
 }
 
-type RunResult = "done" | "blocked" | "error";
+type RunResult = "done" | "error";
+const TODO_CLI_TIMEOUT_MS = 10 * 60 * 1000;
 
-function hasTodoToolEvidence(
-  text: string,
-  messages: Message[],
-  reviewer = false,
-): boolean {
-  const requirement = getTodoToolRequirement(text);
-  if (requirement === "none") return true;
-  const successful = messages.flatMap((message) =>
-    (message.toolResults ?? []).filter((call) => call.result?.success),
-  );
-  if (reviewer || requirement === "read") return successful.length > 0;
-  return successful.some(
-    (call) => call.name !== "read_file" && call.name !== "list_dir",
-  );
+function selectedCliId(
+  selection: string | null,
+  installedIds: ReadonlySet<CliToolId>,
+): CliToolId | null {
+  if (!selection?.startsWith("cli::")) return null;
+  const id = selection.slice(5) as CliToolId;
+  return installedIds.has(id) ? id : null;
 }
 
-async function executeTodo(todoId: string): Promise<RunResult> {
+async function executeTodo(
+  todoId: string,
+  installedIds: ReadonlySet<CliToolId>,
+): Promise<RunResult> {
   const todoStore = useTodoStore.getState();
   const item = todoStore.items.find((todo) => todo.id === todoId);
   if (!item) return "error";
+
+  const cliId = selectedCliId(
+    todoStore.modelByPriority[item.priority],
+    installedIds,
+  );
+  if (!cliId) {
+    todoStore.updateTodo(todoId, {
+      status: "error",
+      error: `Choose an installed CLI agent for ${PRIORITY_META[item.priority].label}.`,
+    });
+    return "error";
+  }
 
   const workspaceId = item.workspaceId ?? getActiveWorkspace().id;
   const workspace = useWorkspaceStore
     .getState()
     .workspaces.find((entry) => entry.id === workspaceId);
-  const workspaceTerminalIds = useTerminalStore
-    .getState()
-    .terminals.filter((terminal) => terminal.workspaceId === workspaceId)
-    .map((terminal) => terminal.id);
+  const terminalStore = useTerminalStore.getState();
+  const workspaceTerminals = terminalStore.terminals.filter(
+    (terminal) => terminal.workspaceId === workspaceId && !terminal.exited,
+  );
   // A stored terminal id goes stale on every restart, so fall back to the
   // workspace's own default rather than running in the wrong shell.
-  const todoTerminalId = resolveTaskTerminal(
+  let todoTerminalId = resolveTaskTerminal(
     item.terminalId,
-    workspaceTerminalIds,
+    workspaceTerminals.map((terminal) => terminal.id),
     useWorkspaceStore.getState().defaultTerminalByWorkspace[workspaceId] ??
       null,
   );
-  useToolRuntimeStore.getState().setTodoTerminal(todoTerminalId ?? null);
-  useToolRuntimeStore
-    .getState()
-    .setTodoWorkspaceFolder(workspace?.path ?? null);
-  if (todoTerminalId) {
-    const terminalStore = useTerminalStore.getState();
-    terminalStore.setActiveTerminal(todoTerminalId);
-    terminalStore.openPanel().catch(() => {});
+  if (!todoTerminalId) {
+    const created = await terminalStore.createTerminal(
+      workspace?.path ?? undefined,
+      undefined,
+      workspaceId,
+    );
+    todoTerminalId = created?.id;
+    if (todoTerminalId) {
+      todoStore.updateTodo(todoId, { terminalId: todoTerminalId });
+    }
   }
-
-  try {
-    const todoModelId =
-      todoStore.modelByPriority[item.priority] ??
-      useModelStore.getState().selectedModelId;
-
-    // Todos write into the currently selected chat instead of spawning a new
-    // session for every task. Only fall back to creating a session when none is
-    // active yet.
-    const sessionStore = useSessionStore.getState();
-    let sessionId = sessionStore.activeSessionId;
-    if (!sessionId) {
-      const session = await sessionStore.createSession({
-        title: `Todo: ${item.text.slice(0, 54)}`,
-        mode: "agent",
-        modelId: todoModelId,
-      });
-      sessionId = session.id;
-    }
-    await sessionStore.updateSessionMeta(sessionId, {
-      mode: "agent",
-      modelId: todoModelId,
+  if (!todoTerminalId) {
+    todoStore.updateTodo(todoId, {
+      status: "error",
+      error: "Could not open a terminal for this task.",
     });
+    return "error";
+  }
+  terminalStore.setActiveTerminal(todoTerminalId);
 
-    const passes = item.multiAgent ? 2 : 1;
-    const firstPass =
-      item.pass && item.sessionId === sessionId ? item.pass + 1 : 1;
-
-    for (let pass = firstPass; pass <= passes; pass += 1) {
-      const reviewer = pass === 2;
-
-      useTodoStore.getState().updateTodo(todoId, {
-        status: "working",
-        sessionId,
-        pass,
-        blockedMessageId: undefined,
-        error: undefined,
-      });
-
-      const prompt = reviewer
-        ? `Review and finish this Todo after another agent worked on it: ${item.text}`
-        : `Complete this Todo: ${item.text}`;
-      const messageIdsBefore = new Set(
-        (useChatStore.getState().messagesBySession[sessionId] ?? []).map(
-          (message) => message.id,
-        ),
-      );
-
-      try {
-        await useChatStore
-          .getState()
-          .sendMessage(prompt, [], undefined, sessionId);
-      } catch (error) {
-        useTodoStore.getState().updateTodo(todoId, {
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return "error";
-      }
-
-      const messages =
-        useChatStore.getState().messagesBySession[sessionId] ?? [];
-      const turnMessages = messages.filter(
-        (message) => !messageIdsBefore.has(message.id),
-      );
-      const lastAssistant = [...turnMessages]
-        .reverse()
-        .find((message) => message.role === "assistant");
-      if (useToolRuntimeStore.getState().pendingCalls.length > 0) {
-        useTodoStore.getState().updateTodo(todoId, {
-          status: "blocked",
-          blockedMessageId: lastAssistant?.id,
-        });
-        return "blocked";
-      }
-      if (!lastAssistant || lastAssistant.status !== "complete") {
-        useTodoStore.getState().updateTodo(todoId, {
-          status: "error",
-          error: lastAssistant?.errorMessage ?? "Work did not finish",
-        });
-        return "error";
-      }
-      if (
-        isIncompleteAgentResponse(
-          lastAssistant.content,
-          lastAssistant.reasoning,
-        )
-      ) {
-        useTodoStore.getState().updateTodo(todoId, {
-          status: "error",
-          error: "Work stopped after describing the task",
-        });
-        return "error";
-      }
-      if (!hasTodoToolEvidence(item.text, turnMessages, reviewer)) {
-        useTodoStore.getState().updateTodo(todoId, {
-          status: "error",
-          error:
-            getTodoToolRequirement(item.text) === "change"
-              ? "No workspace change was executed"
-              : "No workspace inspection was executed",
-        });
-        return "error";
-      }
-    }
-
-    useTodoStore.getState().updateTodo(todoId, {
-      status: "done",
-      blockedMessageId: undefined,
+  const passes = item.multiAgent ? 2 : 1;
+  for (let pass = 1; pass <= passes; pass += 1) {
+    const prompt =
+      pass === 2
+        ? `Review the current workspace after another CLI agent worked on this Todo. Fix anything incomplete, verify the result, then finish: ${item.text}`
+        : `Complete this Todo in the current workspace. Make the required changes, verify the result, then finish: ${item.text}`;
+    todoStore.updateTodo(todoId, {
+      status: "working",
+      pass,
       error: undefined,
     });
-    return "done";
-  } finally {
-    useToolRuntimeStore.getState().setTodoTerminal(null);
-    useToolRuntimeStore.getState().setTodoWorkspaceFolder(null);
+    const result = await executeTool(
+      {
+        id: generateId(),
+        name: "shell_command",
+        args: {
+          command: buildCliTaskCommand(
+            cliId,
+            prompt,
+            useToolRuntimeStore.getState().permissionMode,
+          ),
+        },
+        status: "approved",
+      },
+      {
+        attachedFolders: workspace?.path ? [workspace.path] : [],
+        cwd:
+          workspace?.path ??
+          terminalStore.terminals.find(
+            (terminal) => terminal.id === todoTerminalId,
+          )?.cwd,
+        terminalId: todoTerminalId,
+        timeoutMs: TODO_CLI_TIMEOUT_MS,
+        workspaceId,
+      },
+    );
+    if (!result.result?.success) {
+      todoStore.updateTodo(todoId, {
+        status: "error",
+        error:
+          result.result?.error ??
+          `${CLI_TOOLS.find((tool) => tool.id === cliId)?.name ?? cliId} stopped.`,
+      });
+      return "error";
+    }
   }
+
+  todoStore.updateTodo(todoId, {
+    status: "done",
+    pass: undefined,
+    error: undefined,
+  });
+  return "done";
 }
 
-async function runQueue(): Promise<void> {
+async function runQueue(installedIds: ReadonlySet<CliToolId>): Promise<void> {
   const store = useTodoStore.getState();
   if (store.runnerActive) return;
-  const chat = useChatStore.getState();
-  if (
-    chat.streamingSessionId ||
-    chat.queue.length > 0 ||
-    useToolRuntimeStore.getState().pendingCalls.length > 0
-  ) {
-    return;
-  }
-  // One chat session drives the agent, so the runner works a single workspace
-  // at a time — the one in view. Other boards stay queued until switched to.
+  // A runner works one workspace at a time: the board currently in view.
+  // Other boards stay queued until switched to.
   const workspaceId = getActiveWorkspace().id;
   store.setRunner(true);
 
@@ -833,7 +655,7 @@ async function runQueue(): Promise<void> {
       if (!next) break;
       useTodoStore.getState().setRunner(true, next.id);
       try {
-        const result = await executeTodo(next.id);
+        const result = await executeTodo(next.id, installedIds);
         if (result !== "done") break;
       } catch (error) {
         useTodoStore.getState().updateTodo(next.id, {
@@ -856,12 +678,8 @@ export function TodoView() {
   const setRunner = useTodoStore((state) => state.setRunner);
   const clearCompleted = useTodoStore((state) => state.clearCompleted);
   const moveTodo = useTodoStore((state) => state.moveTodo);
-  const streamingSessionId = useChatStore(
-    (state) => state.streamingSessionId,
-  );
-  const chatQueueLength = useChatStore((state) => state.queue.length);
-  const pendingApprovals = useToolRuntimeStore(
-    (state) => state.pendingCalls.length,
+  const modelByPriority = useTodoStore(
+    (state) => state.modelByPriority,
   );
   const permissionMode = useToolRuntimeStore(
     (state) => state.permissionMode,
@@ -869,7 +687,34 @@ export function TodoView() {
   const setToolPermission = useSettingsStore(
     (state) => state.setToolPermission,
   );
-  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const openSettings = useUiStore((state) => state.openSettings);
+  const [cliStatuses, setCliStatuses] = useState<CliToolStatus[]>([]);
+  const [cliLoading, setCliLoading] = useState(true);
+  const [cliError, setCliError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isTauri) {
+      setCliLoading(false);
+      return;
+    }
+    void ipc
+      .listCliToolStatuses()
+      .then((statuses) => setCliStatuses(statuses))
+      .catch((error) =>
+        setCliError(error instanceof Error ? error.message : String(error)),
+      )
+      .finally(() => setCliLoading(false));
+  }, []);
+  const installedAgents = useMemo(
+    () =>
+      CLI_TOOLS.filter((agent) =>
+        cliStatuses.some((status) => status.id === agent.id && status.installed),
+      ),
+    [cliStatuses],
+  );
+  const installedIds = useMemo(
+    () => new Set(installedAgents.map((agent) => agent.id)),
+    [installedAgents],
+  );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -877,23 +722,19 @@ export function TodoView() {
   const queued = items.filter((item) => item.status === "queued").length;
   const completed = items.filter((item) => item.status === "done").length;
   const active = items.find((item) => item.id === activeTodoId);
-  const agentBusy =
-    streamingSessionId !== null ||
-    chatQueueLength > 0 ||
-    pendingApprovals > 0;
-  const changePermissionMode = async (value: string) => {
-    const next = value as typeof permissionMode;
-    setToolPermission(next);
-    if (next !== "yolo") return;
-    if (!activeSessionId) return;
-    try {
-      await useChatStore.getState().approvePendingTools(activeSessionId);
-    } catch (error) {
-      toast.error("Could not resume Todo tools", {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
+  const missingAgentPriorities = TODO_PRIORITIES.filter(
+    (priority) =>
+      items.some(
+        (item) => item.priority === priority && item.status === "queued",
+      ) && !selectedCliId(modelByPriority[priority], installedIds),
+  );
+  const canStart =
+    queued > 0 &&
+    !cliLoading &&
+    !cliError &&
+    installedAgents.length > 0 &&
+    missingAgentPriorities.length === 0 &&
+    permissionMode !== "blocked";
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingItem = draggingId
@@ -939,15 +780,17 @@ export function TodoView() {
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            This board belongs to {workspace.name}. Work runs Critical to Low in
-            the terminal each task is assigned to.
+            Each priority uses an installed CLI agent. Assign tasks to an idle
+            shell; Todo starts the agent there and runs Critical to Low.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <Select
             value={permissionMode}
-            onValueChange={(value) => void changePermissionMode(value)}
+            onValueChange={(value) =>
+              setToolPermission(value as typeof permissionMode)
+            }
           >
             <SelectTrigger
               size="sm"
@@ -990,8 +833,8 @@ export function TodoView() {
             <Button
               type="button"
               size="sm"
-              onClick={() => void runQueue()}
-              disabled={queued === 0 || agentBusy}
+              onClick={() => void runQueue(installedIds)}
+              disabled={!canStart}
               className="gap-1.5"
             >
               <Play className="size-3.5" aria-hidden />
@@ -1006,11 +849,36 @@ export function TodoView() {
               <Bot className="size-3.5" aria-hidden />
               Working on {PRIORITY_META[active.priority].label}: {active.text}
             </p>
-          ) : agentBusy ? (
+          ) : cliLoading ? (
             <p className="text-xs text-muted-foreground">
-              {pendingApprovals > 0
-                ? "Tool approval is waiting. Switch to YOLO to resume it."
-                : "Current work is still finishing before Todo can start."}
+              Checking installed CLI agents...
+            </p>
+          ) : cliError ? (
+            <p className="text-xs text-destructive" role="alert">
+              Could not inspect CLI agents: {cliError}
+            </p>
+          ) : installedAgents.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No CLI agent is installed.{" "}
+              <button
+                type="button"
+                className="font-medium text-foreground underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => openSettings("providers")}
+              >
+                Open CLI Tools
+              </button>
+            </p>
+          ) : permissionMode === "blocked" ? (
+            <p className="text-xs text-muted-foreground">
+              Todo execution is blocked. Choose Manual, Auto, or YOLO to start.
+            </p>
+          ) : missingAgentPriorities.length > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Choose an agent for{" "}
+              {missingAgentPriorities
+                .map((priority) => PRIORITY_META[priority].label)
+                .join(", ")}
+              .
             </p>
           ) : queued > 0 ? (
             <p className="text-xs text-muted-foreground">
@@ -1036,6 +904,8 @@ export function TodoView() {
                 key={priority}
                 priority={priority}
                 items={items.filter((item) => item.priority === priority)}
+                agents={installedAgents}
+                agentsLoading={cliLoading}
               />
             ))}
           </div>

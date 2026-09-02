@@ -41,6 +41,8 @@ export interface ToolContext {
   cwd?: string;
   /** When set, shell_command runs in this terminal instead of a one-shot subprocess. */
   terminalId?: string;
+  /** Longer-running callers such as Todo CLI agents may raise the PTY cap. */
+  timeoutMs?: number;
   /** Scopes anything learned from a command to the workspace that ran it. */
   workspaceId?: string;
 }
@@ -319,6 +321,7 @@ const MAX_TERMINAL_CAPTURE_BYTES = 256 * 1024;
 function awaitTerminalCommand(
   terminalId: string,
   script: TerminalScript,
+  timeoutMs = TERMINAL_COMMAND_TIMEOUT_MS,
 ): Promise<TerminalShellResult> {
   return new Promise<TerminalShellResult>((resolve) => {
     let buffer = "";
@@ -353,7 +356,7 @@ function awaitTerminalCommand(
         exitCode: null,
         timedOut: true,
       });
-    }, TERMINAL_COMMAND_TIMEOUT_MS);
+    }, timeoutMs);
 
     const unsubscribe = subscribeTerminalEvents(
       terminalId,
@@ -410,6 +413,7 @@ async function executeShellCommandInTerminal(
   command: string,
   cwd: string,
   roots: string[],
+  timeoutMs?: number,
 ): Promise<TerminalShellResult> {
   const terminal = useTerminalStore
     .getState()
@@ -454,7 +458,7 @@ async function executeShellCommandInTerminal(
   });
 
   return runExclusively(terminalId, () =>
-    awaitTerminalCommand(terminalId, script),
+    awaitTerminalCommand(terminalId, script, timeoutMs),
   );
 }
 
@@ -547,6 +551,7 @@ export async function executeTool(
               call.args.command,
               cwd,
               roots,
+              context.timeoutMs,
             )
           : await ipc.executeShellCommand(call.args.command, cwd, roots);
         // Learn from what actually ran. Extraction is synchronous and usually
