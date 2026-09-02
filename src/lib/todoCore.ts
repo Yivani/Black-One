@@ -84,3 +84,26 @@ export function moveTodo(
     ...destination,
   ];
 }
+
+/**
+ * Fills every priority whose agent is unset — or no longer installed — with the
+ * first installed one. Without this the board silently refuses to start until
+ * the same agent is picked in all four lanes. Returns null when nothing needs
+ * to change, so callers can skip a write.
+ */
+export function fillPriorityAgents(
+  current: Record<TodoPriority, string | null>,
+  installed: readonly string[],
+): Record<TodoPriority, string | null> | null {
+  if (installed.length === 0) return null;
+  const fallback = installed[0];
+  let changed = false;
+  const next = { ...current };
+  for (const priority of TODO_PRIORITIES) {
+    const chosen = next[priority];
+    if (chosen && installed.includes(chosen)) continue;
+    next[priority] = fallback;
+    changed = true;
+  }
+  return changed ? next : null;
+}

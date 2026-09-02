@@ -3,6 +3,7 @@ import { immer } from "zustand/middleware/immer";
 import { playSound } from "@/hooks/useHaptics";
 import { generateId } from "@/lib/utils";
 import {
+  fillPriorityAgents,
   moveTodo,
   TODO_PRIORITIES,
   type TodoItem,
@@ -31,6 +32,11 @@ interface TodoState extends PersistedTodoState {
     overId?: string,
   ) => void;
   setPriorityModel: (priority: TodoPriority, modelId: string) => void;
+  /**
+   * Points every lane at an installed agent, so a fresh board can start work
+   * without picking the same agent four times.
+   */
+  applyDefaultAgents: (installedModelIds: readonly string[]) => void;
   /** Clears finished tasks in one workspace, leaving other boards untouched. */
   clearCompleted: (workspaceId?: string) => void;
   /** Drops every task belonging to a deleted workspace. */
@@ -158,6 +164,15 @@ export const useTodoStore = create<TodoState>()(
     setPriorityModel: (priority, modelId) => {
       set((state) => {
         state.modelByPriority[priority] = modelId;
+      });
+      persist(get());
+    },
+
+    applyDefaultAgents: (installedModelIds) => {
+      const next = fillPriorityAgents(get().modelByPriority, installedModelIds);
+      if (!next) return;
+      set((state) => {
+        state.modelByPriority = next;
       });
       persist(get());
     },

@@ -715,6 +715,14 @@ export function TodoView() {
     () => new Set(installedAgents.map((agent) => agent.id)),
     [installedAgents],
   );
+  const applyDefaultAgents = useTodoStore((state) => state.applyDefaultAgents);
+  // Lanes start pointed at an installed agent. Otherwise Start work sits
+  // disabled until the same agent is picked in all four lanes, which reads as
+  // a broken button rather than a missing choice.
+  useEffect(() => {
+    if (installedAgents.length === 0) return;
+    applyDefaultAgents(installedAgents.map((agent) => `cli::${agent.id}`));
+  }, [applyDefaultAgents, installedAgents]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -728,13 +736,22 @@ export function TodoView() {
         (item) => item.priority === priority && item.status === "queued",
       ) && !selectedCliId(modelByPriority[priority], installedIds),
   );
-  const canStart =
-    queued > 0 &&
-    !cliLoading &&
-    !cliError &&
-    installedAgents.length > 0 &&
-    missingAgentPriorities.length === 0 &&
-    permissionMode !== "blocked";
+  const startBlockedReason = cliLoading
+    ? "Still checking which CLI agents are installed."
+    : cliError
+      ? `Could not inspect CLI agents: ${cliError}`
+      : installedAgents.length === 0
+        ? "No CLI agent is installed. Open Settings → CLI Tools to install one."
+        : permissionMode === "blocked"
+          ? "Tool permission is Blocked. Choose Manual, Auto, or YOLO."
+          : missingAgentPriorities.length > 0
+            ? `Choose an agent for ${missingAgentPriorities
+                .map((priority) => PRIORITY_META[priority].label)
+                .join(", ")}.`
+            : queued === 0
+              ? "No queued tasks on this board."
+              : null;
+  const canStart = startBlockedReason === null;
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingItem = draggingId
@@ -830,16 +847,19 @@ export function TodoView() {
               Pause after task
             </Button>
           ) : (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void runQueue(installedIds)}
-              disabled={!canStart}
-              className="gap-1.5"
-            >
-              <Play className="size-3.5" aria-hidden />
-              Start work
-            </Button>
+            // A disabled button swallows its own tooltip, so the wrapper carries it.
+            <span title={startBlockedReason ?? undefined} className="inline-flex">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void runQueue(installedIds)}
+                disabled={!canStart}
+                className="gap-1.5"
+              >
+                <Play className="size-3.5" aria-hidden />
+                Start work
+              </Button>
+            </span>
           )}
         </div>
 
