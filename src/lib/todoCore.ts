@@ -1,53 +1,43 @@
 export const TODO_PRIORITIES = ["critical", "high", "mid", "low"] as const;
 
 export type TodoPriority = (typeof TODO_PRIORITIES)[number];
-export type TodoStatus = "queued" | "working" | "blocked" | "done" | "error";
+
+/**
+ * Tasks are written down and ticked off by hand. Nothing runs them, so there
+ * is no state between the two.
+ */
+export type TodoStatus = "queued" | "done";
 
 export interface TodoItem {
   id: string;
   text: string;
   priority: TodoPriority;
   status: TodoStatus;
-  multiAgent: boolean;
   createdAt: number;
-  sessionId?: string;
-  pass?: number;
-  blockedMessageId?: string;
-  error?: string;
-  /** Terminal that should run this task's shell commands. */
-  terminalId?: string;
   /**
    * Workspace this task belongs to. Boards are per-workspace, so a task is
-   * only ever listed and run inside its own.
+   * only ever listed inside its own.
    */
   workspaceId?: string;
 }
 
-export type TodoToolRequirement = "none" | "read" | "change";
-
-// ponytail: keyword gate covers today's free-form Todos; use an explicit task kind if the board gains typed tasks.
-const CHANGE_ACTION =
-  /\b(add|build|change|create|delete|edit|fix|implement|install|make|modify|move|remove|rename|replace|refactor|update|write)\b/i;
-const READ_ACTION =
-  /\b(analy[sz]e|check|find|inspect|locate|review|scan|summari[sz]e|verify)\b/i;
-const WORKSPACE_TARGET =
-  /(?:^|\s)(?:[a-z]:[\\/]|\.{0,2}[\\/]|[\\/][\w.-])|\b(app|button|code|component|dropdown|file|folder|page|project|repo|repository|script|site|ui|website)\b/i;
-
-export function getTodoToolRequirement(text: string): TodoToolRequirement {
-  if (!WORKSPACE_TARGET.test(text)) return "none";
-  if (CHANGE_ACTION.test(text)) return "change";
-  if (READ_ACTION.test(text)) return "read";
-  return "none";
-}
-
-export function getNextTodo(items: TodoItem[]): TodoItem | undefined {
-  for (const priority of TODO_PRIORITIES) {
-    const next = items.find(
-      (item) => item.priority === priority && item.status === "queued",
+/**
+ * Open tasks in the order they are meant to be picked up: Critical first, then
+ * High, Mid, and Low, keeping the hand-arranged order inside each lane.
+ *
+ * Finished tasks drop out. This feeds the sidebar queue, which is a list to
+ * work from rather than a record of what was done.
+ */
+export function sortTodosByRisk(items: readonly TodoItem[]): TodoItem[] {
+  // filter() already returns a fresh array, so the in-place sort is safe. Sort
+  // is stable, which is what preserves the order within each lane.
+  return items
+    .filter((item) => item.status !== "done")
+    .sort(
+      (a, b) =>
+        TODO_PRIORITIES.indexOf(a.priority) -
+        TODO_PRIORITIES.indexOf(b.priority),
     );
-    if (next) return next;
-  }
-  return undefined;
 }
 
 export function moveTodo(
@@ -83,27 +73,4 @@ export function moveTodo(
     ...remaining.filter((item) => !destinationIds.has(item.id)),
     ...destination,
   ];
-}
-
-/**
- * Fills every priority whose agent is unset — or no longer installed — with the
- * first installed one. Without this the board silently refuses to start until
- * the same agent is picked in all four lanes. Returns null when nothing needs
- * to change, so callers can skip a write.
- */
-export function fillPriorityAgents(
-  current: Record<TodoPriority, string | null>,
-  installed: readonly string[],
-): Record<TodoPriority, string | null> | null {
-  if (installed.length === 0) return null;
-  const fallback = installed[0];
-  let changed = false;
-  const next = { ...current };
-  for (const priority of TODO_PRIORITIES) {
-    const chosen = next[priority];
-    if (chosen && installed.includes(chosen)) continue;
-    next[priority] = fallback;
-    changed = true;
-  }
-  return changed ? next : null;
 }

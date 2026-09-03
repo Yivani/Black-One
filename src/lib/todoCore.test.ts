@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  fillPriorityAgents,
-  getNextTodo,
-  getTodoToolRequirement,
-  moveTodo,
-  type TodoItem,
-  type TodoPriority,
-} from "./todoCore.ts";
+import { moveTodo, sortTodosByRisk, type TodoItem } from "./todoCore.ts";
 
 const task = (
   id: string,
@@ -18,16 +11,49 @@ const task = (
   text: id,
   priority,
   status,
-  multiAgent: false,
   createdAt: 0,
 });
 
-test("selects Critical before lower-priority work", () => {
-  assert.equal(
-    getNextTodo([task("low", "low"), task("critical", "critical")])?.id,
-    "critical",
+// ------------------------------------------------------------- risk order
+
+test("lists Critical first and Low last", () => {
+  const sorted = sortTodosByRisk([
+    task("l", "low"),
+    task("m", "mid"),
+    task("c", "critical"),
+    task("h", "high"),
+  ]);
+  assert.deepEqual(sorted.map((item) => item.id), ["c", "h", "m", "l"]);
+});
+
+test("keeps the hand-arranged order inside a lane", () => {
+  const sorted = sortTodosByRisk([
+    task("second", "high"),
+    task("first", "critical"),
+    task("third", "high"),
+  ]);
+  assert.deepEqual(
+    sorted.map((item) => item.id),
+    ["first", "second", "third"],
+    "a stable sort is what preserves the board order within each priority",
   );
 });
+
+test("drops finished tasks", () => {
+  const sorted = sortTodosByRisk([
+    task("done", "critical", "done"),
+    task("open", "low"),
+  ]);
+  assert.deepEqual(sorted.map((item) => item.id), ["open"]);
+});
+
+test("does not mutate the array it is given", () => {
+  const items = [task("l", "low"), task("c", "critical")];
+  sortTodosByRisk(items);
+  assert.deepEqual(items.map((item) => item.id), ["l", "c"]);
+});
+
+// ---------------------------------------------------------------- moving
 
 test("moves tasks down within a priority", () => {
   const moved = moveTodo(
@@ -50,88 +76,4 @@ test("moves tasks into a different priority", () => {
     moved.filter((item) => item.priority === "critical").map((item) => item.id),
     ["a", "b"],
   );
-});
-
-test("requires real tool evidence for workspace Todos", () => {
-  assert.equal(
-    getTodoToolRequirement(
-      "Change in /products/blackone the interactive app rename agent to ToDo",
-    ),
-    "change",
-  );
-  assert.equal(
-    getTodoToolRequirement("in the dropdown make Black One with an outline animation"),
-    "change",
-  );
-  assert.equal(getTodoToolRequirement("Summarize this project"), "read");
-  assert.equal(getTodoToolRequirement("Write a short customer email"), "none");
-});
-
-const models = (
-  entries: Partial<Record<TodoPriority, string | null>> = {},
-): Record<TodoPriority, string | null> => ({
-  critical: null,
-  high: null,
-  mid: null,
-  low: null,
-  ...entries,
-});
-
-test("points empty lanes at the first installed agent", () => {
-  assert.deepEqual(
-    fillPriorityAgents(models(), ["cli::codex", "cli::claude"]),
-    models({
-      critical: "cli::codex",
-      high: "cli::codex",
-      mid: "cli::codex",
-      low: "cli::codex",
-    }),
-  );
-});
-
-test("keeps agents that are still installed", () => {
-  assert.deepEqual(
-    fillPriorityAgents(models({ critical: "cli::claude" }), [
-      "cli::codex",
-      "cli::claude",
-    ]),
-    models({
-      critical: "cli::claude",
-      high: "cli::codex",
-      mid: "cli::codex",
-      low: "cli::codex",
-    }),
-  );
-});
-
-test("replaces an agent that is no longer installed", () => {
-  const filled = fillPriorityAgents(
-    models({
-      critical: "cli::gemini",
-      high: "cli::codex",
-      mid: "cli::codex",
-      low: "cli::codex",
-    }),
-    ["cli::codex"],
-  );
-  assert.equal(filled?.critical, "cli::codex");
-});
-
-test("reports no change when every lane already has an installed agent", () => {
-  assert.equal(
-    fillPriorityAgents(
-      models({
-        critical: "cli::codex",
-        high: "cli::codex",
-        mid: "cli::codex",
-        low: "cli::codex",
-      }),
-      ["cli::codex"],
-    ),
-    null,
-  );
-});
-
-test("leaves lanes alone when nothing is installed", () => {
-  assert.equal(fillPriorityAgents(models(), []), null);
 });

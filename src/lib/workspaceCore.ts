@@ -4,7 +4,7 @@
  *
  * Pure module — no imports — so the activity roll-up can be unit-tested.
  */
-import type { TodoItem, TodoStatus } from "@/lib/todoCore";
+import type { TodoItem } from "@/lib/todoCore";
 
 export interface Workspace {
   id: string;
@@ -54,16 +54,12 @@ export interface WorkspaceActivityInput {
   pendingApprovals?: number;
 }
 
-const STATUS_COUNTS: Record<TodoStatus, keyof WorkspaceStatus | null> = {
-  queued: null,
-  working: "running",
-  blocked: "waiting",
-  done: "done",
-  error: "failed",
-};
-
 /**
  * Rolls a workspace's tasks up into one status.
+ *
+ * Tasks are only ever queued or finished — nothing runs them — so `running`
+ * and `waiting` come from the chat turn and its pending approvals rather than
+ * from the board.
  *
  * `done` is only reported when every task finished and at least one exists, so
  * an empty board reads as idle rather than complete.
@@ -84,19 +80,16 @@ export function summarizeWorkspace(
   };
 
   for (const todo of todos) {
-    const bucket = STATUS_COUNTS[todo.status];
-    if (bucket === "running") status.running += 1;
-    else if (bucket === "waiting") status.waiting += 1;
-    else if (bucket === "failed") status.failed += 1;
-    else if (bucket === "done") status.done += 1;
-    if (todo.status !== "done") status.open += 1;
+    if (todo.status === "done") status.done += 1;
+    else status.open += 1;
   }
 
-  if (pendingApprovals > 0) status.waiting += pendingApprovals;
+  status.waiting = pendingApprovals;
+  if (streaming) status.running = 1;
 
   if (status.waiting > 0) {
     status.activity = "waiting";
-  } else if (status.running > 0 || streaming) {
+  } else if (status.running > 0) {
     status.activity = "running";
   } else if (status.failed > 0) {
     status.activity = "error";
@@ -167,24 +160,4 @@ export function selectActiveTerminalId<T extends WorkspaceScopedTerminal>(
     return selected;
   }
   return owned[0]?.id ?? null;
-}
-
-/**
- * Picks the terminal a task should run in: its own if it still belongs to this
- * workspace, otherwise the workspace default, otherwise none.
- *
- * Terminals die with the app, so a stored id routinely outlives its terminal.
- */
-export function resolveTaskTerminal(
-  todoTerminalId: string | undefined,
-  workspaceTerminalIds: readonly string[],
-  workspaceDefaultId: string | null,
-): string | undefined {
-  if (todoTerminalId && workspaceTerminalIds.includes(todoTerminalId)) {
-    return todoTerminalId;
-  }
-  if (workspaceDefaultId && workspaceTerminalIds.includes(workspaceDefaultId)) {
-    return workspaceDefaultId;
-  }
-  return undefined;
 }

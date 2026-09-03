@@ -46,6 +46,10 @@ export const de: Record<TranslationKey, string> = {
   "sidebar.closeWorkspace": "Arbeitsbereich schließen",
   "sidebar.noTerminals": "Noch keine Terminals",
   "sidebar.noTasks": "Noch keine Aufgaben",
+  "sidebar.openBoard": "Todo-Board öffnen",
+  "sidebar.copyTask": "Aufgabe kopieren",
+  "sidebar.taskCopied": "In die Zwischenablage kopiert",
+  "sidebar.tasksFinished": "Alle {count} Aufgaben erledigt",
   "sidebar.shellCount": "{count} Terminals",
 
   // ------------------------------------------------------- workspace status

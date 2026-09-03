@@ -31,7 +31,9 @@ Several native shells powered by `portable-pty`, each belonging to a workspace. 
 One global bank shared by every workspace. It saves what you *ask* it to remember and what your machine is missing — not the build command your `package.json` already states. Facts are written into `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md`, so the CLI agents in your terminals read the same memory Black One does.
 
 **Todo board**
-Critical → High → Mid → Low, with a model per priority and a terminal per task.
+Critical → High → Mid → Low, per workspace. Tasks are yours to run: drag them
+between lanes, then copy one and paste it wherever you want it done. The sidebar
+keeps the open ones listed Critical first, each row a copy button.
 
 **Made to live in**
 21 colour themes, each checked against WCAG contrast in both light and dark. Eleven short synthesized sounds for sending, finishing, tools, memory, and terminals — every family switchable. English, German, and Spanish throughout. A tray icon that carries workspace status, and launch-at-login.

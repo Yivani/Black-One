@@ -50,6 +50,10 @@ export const en = {
   "sidebar.closeWorkspace": "Close workspace",
   "sidebar.noTerminals": "No terminals yet",
   "sidebar.noTasks": "No tasks yet",
+  "sidebar.openBoard": "Open the Todo board",
+  "sidebar.copyTask": "Copy task",
+  "sidebar.taskCopied": "Copied to clipboard",
+  "sidebar.tasksFinished": "All {count} tasks finished",
   "sidebar.shellCount": "{count} shells",
 
   // ------------------------------------------------------- workspace status

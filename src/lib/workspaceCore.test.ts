@@ -4,7 +4,6 @@ import type { TodoItem, TodoStatus } from "./todoCore.ts";
 import {
   compareByUrgency,
   deriveWorkspaceName,
-  resolveTaskTerminal,
   selectActiveTerminalId,
   summarizeWorkspace,
   terminalsForWorkspace,
@@ -15,7 +14,6 @@ const todo = (status: TodoStatus): TodoItem => ({
   text: status,
   priority: "mid",
   status,
-  multiAgent: false,
   createdAt: 0,
 });
 
@@ -32,49 +30,23 @@ test("queued work alone is idle", () => {
   assert.equal(summarizeWorkspace({ todos: [todo("queued")] }).activity, "idle");
 });
 
-test("a working task reports running", () => {
+test("a streaming turn reports running", () => {
   const status = summarizeWorkspace({
-    todos: [todo("queued"), todo("working")],
+    todos: [todo("queued"), todo("queued")],
+    streaming: true,
   });
   assert.equal(status.activity, "running");
-  assert.equal(status.running, 1);
   assert.equal(status.open, 2);
 });
 
-test("a streaming turn reports running even with no working task", () => {
-  assert.equal(
-    summarizeWorkspace({ todos: [todo("queued")], streaming: true }).activity,
-    "running",
-  );
-});
-
-test("a blocked task outranks a running one", () => {
+test("a pending approval outranks a streaming turn", () => {
   const status = summarizeWorkspace({
-    todos: [todo("working"), todo("blocked")],
-  });
-  assert.equal(status.activity, "waiting");
-  assert.equal(status.waiting, 1);
-  assert.equal(status.running, 1);
-});
-
-test("pending approvals report waiting even with no blocked task", () => {
-  const status = summarizeWorkspace({
-    todos: [todo("working")],
+    todos: [todo("queued")],
+    streaming: true,
     pendingApprovals: 2,
   });
   assert.equal(status.activity, "waiting");
   assert.equal(status.waiting, 2);
-});
-
-test("a failure outranks completion but not running work", () => {
-  assert.equal(
-    summarizeWorkspace({ todos: [todo("error"), todo("done")] }).activity,
-    "error",
-  );
-  assert.equal(
-    summarizeWorkspace({ todos: [todo("error"), todo("working")] }).activity,
-    "running",
-  );
 });
 
 test("done requires every task to be finished", () => {
@@ -89,22 +61,13 @@ test("done requires every task to be finished", () => {
   );
 });
 
-test("counts every bucket", () => {
+test("counts open against finished", () => {
   const status = summarizeWorkspace({
-    todos: [
-      todo("queued"),
-      todo("working"),
-      todo("blocked"),
-      todo("done"),
-      todo("error"),
-    ],
+    todos: [todo("queued"), todo("queued"), todo("done")],
   });
-  assert.equal(status.total, 5);
+  assert.equal(status.total, 3);
   assert.equal(status.done, 1);
-  assert.equal(status.failed, 1);
-  assert.equal(status.running, 1);
-  assert.equal(status.waiting, 1);
-  assert.equal(status.open, 4);
+  assert.equal(status.open, 2);
 });
 
 test("urgency ordering puts attention first", () => {
@@ -129,29 +92,6 @@ test("disambiguates a duplicate name", () => {
   assert.equal(deriveWorkspaceName("/a/site", ["site"]), "site 2");
   assert.equal(deriveWorkspaceName("/a/site", ["site", "site 2"]), "site 3");
   assert.equal(deriveWorkspaceName(null, ["Workspace"]), "Workspace 2");
-});
-
-// --------------------------------------------------------- terminal routing
-
-test("keeps a task's own terminal when it still exists", () => {
-  assert.equal(resolveTaskTerminal("t1", ["t1", "t2"], "t2"), "t1");
-});
-
-test("falls back to the workspace default when the task terminal is gone", () => {
-  assert.equal(
-    resolveTaskTerminal("dead", ["t1", "t2"], "t2"),
-    "t2",
-    "terminals die with the app, so stored ids go stale",
-  );
-});
-
-test("never routes to a terminal from another workspace", () => {
-  assert.equal(resolveTaskTerminal("other-ws-terminal", ["t1"], null), undefined);
-  assert.equal(resolveTaskTerminal("t1", [], "gone"), undefined);
-});
-
-test("returns undefined when the workspace has no terminals", () => {
-  assert.equal(resolveTaskTerminal(undefined, [], null), undefined);
 });
 
 // -------------------------------------------------------- terminal scoping

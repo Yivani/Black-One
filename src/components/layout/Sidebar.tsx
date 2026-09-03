@@ -1,16 +1,17 @@
 import {
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import {
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Circle,
+  Copy,
   ListTodo,
-  Loader2,
   Pencil,
   Plus,
   Terminal,
@@ -42,6 +43,7 @@ import {
   SIDEBAR_ROW_IDLE,
   SIDEBAR_ROW_REVEAL,
 } from "@/components/layout/SidebarPrimitives";
+import { useCopyText } from "@/hooks/useCopyText";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
   useActiveTerminalId,
@@ -50,9 +52,9 @@ import {
 } from "@/hooks/useWorkspace";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
-import { useTodoStore } from "@/stores/todoStore";
 import { useUiStore } from "@/stores/uiStore";
-import type { TodoItem } from "@/lib/todoCore";
+import { sortTodosByRisk, type TodoItem } from "@/lib/todoCore";
+import { PRIORITY_META } from "@/lib/todoPriority";
 
 const TERMINAL_COLORS = [
   { label: "Default", value: null, swatch: "#737373" },
@@ -92,25 +94,49 @@ function TipButton({ label, onClick, children, active }: TipButtonProps) {
   );
 }
 
-function TodoStatusIcon({
-  item,
-  active,
-}: {
-  item: TodoItem;
-  active: boolean;
-}) {
-  if (item.status === "working" || active) {
-    return <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />;
-  }
+/**
+ * One task in the sidebar queue.
+ *
+ * The whole row is the copy button, because copying is the only thing this
+ * list is for: the task text goes to the clipboard ready to paste into a
+ * terminal. The priority dot carries the same colour as the board lane, so
+ * "Critical first" is legible without reading the order.
+ */
+function TodoQueueRow({ item }: { item: TodoItem }) {
+  const { t } = useTranslation();
+  const { copied, copy } = useCopyText(item.text);
+  const meta = PRIORITY_META[item.priority];
+
   return (
-    <Circle
+    <button
+      type="button"
+      onClick={copy}
+      title={item.text}
+      aria-label={
+        copied ? t("sidebar.taskCopied") : `${t("sidebar.copyTask")}: ${item.text}`
+      }
       className={cn(
-        "size-3 shrink-0",
-        item.status === "blocked" || item.status === "error"
-          ? "fill-destructive text-destructive"
-          : "text-muted-foreground",
+        SIDEBAR_ROW,
+        SIDEBAR_ROW_IDLE,
+        "text-xs text-muted-foreground hover:text-foreground",
       )}
-    />
+    >
+      <span
+        className={cn("size-2 shrink-0 rounded-full", meta.dot)}
+        aria-hidden
+      />
+      <span className="min-w-0 flex-1 truncate">{item.text}</span>
+      {copied ? (
+        <Check className="size-3.5 shrink-0 text-emerald-500" aria-hidden />
+      ) : (
+        // Dimmed rather than hidden: copying is what this list is for, so the
+        // affordance has to be visible before the pointer arrives.
+        <Copy
+          className="size-3.5 shrink-0 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          aria-hidden
+        />
+      )}
+    </button>
   );
 }
 
@@ -175,8 +201,6 @@ function ExpandedSidebar() {
   const terminalColors = useTerminalStore((s) => s.terminalColors);
   const setTerminalColor = useTerminalStore((s) => s.setTerminalColor);
   const items = useWorkspaceTodos();
-  const runnerActive = useTodoStore((s) => s.runnerActive);
-  const activeTodoId = useTodoStore((s) => s.activeTodoId);
   const setViewMode = useUiStore((s) => s.setViewMode);
   const viewMode = useUiStore((s) => s.viewMode);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
@@ -191,8 +215,9 @@ function ExpandedSidebar() {
   const [terminalName, setTerminalName] = useState("");
   const cancelTerminalRename = useRef(false);
 
-  const openItems = items.filter((item) => item.status !== "done");
-  const doneCount = items.filter((item) => item.status === "done").length;
+  // Critical first: this list is worked top-down, so the order is the point.
+  const openItems = useMemo(() => sortTodosByRisk(items), [items]);
+  const doneCount = items.length - openItems.length;
 
   const handleNewTerminal = () => {
     setViewMode("code");
@@ -382,20 +407,12 @@ function ExpandedSidebar() {
           // Count what is listed below it: open work, not finished work.
           count={openItems.length || undefined}
           actions={
-            <>
-              {runnerActive && (
-                <Loader2
-                  className="size-3.5 shrink-0 animate-spin text-primary"
-                  aria-label="Todo running"
-                />
-              )}
-              <SidebarIconAction
-                label={t("sidebar.tasks")}
-                onClick={() => setViewMode("todo")}
-              >
-                <ListTodo className="size-4" aria-hidden />
-              </SidebarIconAction>
-            </>
+            <SidebarIconAction
+              label={t("sidebar.openBoard")}
+              onClick={() => setViewMode("todo")}
+            >
+              <ListTodo className="size-4" aria-hidden />
+            </SidebarIconAction>
           }
         >
           {items.length === 0 ? (
@@ -405,44 +422,14 @@ function ExpandedSidebar() {
               className={cn(SIDEBAR_ROW, "text-xs text-muted-foreground")}
             >
               <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
-              <span className="truncate">All {doneCount} tasks finished</span>
+              <span className="truncate">
+                {t("sidebar.tasksFinished", { count: doneCount })}
+              </span>
             </div>
           ) : (
-            <>
-              {openItems.slice(0, 5).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setViewMode("todo")}
-                  aria-label={`Open Todo: ${item.text}`}
-                  title={item.text}
-                  className={cn(
-                    SIDEBAR_ROW,
-                    SIDEBAR_ROW_IDLE,
-                    "text-xs text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <TodoStatusIcon
-                    item={item}
-                    active={runnerActive && item.id === activeTodoId}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{item.text}</span>
-                </button>
-              ))}
-              {openItems.length > 5 && (
-                <button
-                  type="button"
-                  onClick={() => setViewMode("todo")}
-                  className={cn(
-                    SIDEBAR_ROW,
-                    SIDEBAR_ROW_IDLE,
-                    "pl-[26px] text-xs text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {openItems.length - 5} more
-                </button>
-              )}
-            </>
+            openItems.map((item) => (
+              <TodoQueueRow key={item.id} item={item} />
+            ))
           )}
         </SidebarSection>
       </div>

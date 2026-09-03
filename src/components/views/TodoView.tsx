@@ -1,19 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Bot,
-  Check,
-  Circle,
-  GripVertical,
-  Loader2,
-  Play,
-  Plus,
-  RotateCcw,
-  Square,
-  Terminal,
-  Trash2,
-  Users,
-  X,
-} from "lucide-react";
+import { useCallback, useState } from "react";
+import { Check, Circle, Copy, GripVertical, Plus, Trash2 } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -38,176 +24,22 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn, generateId } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
-  getNextTodo,
   TODO_PRIORITIES,
   type TodoItem,
   type TodoPriority,
 } from "@/lib/todoCore";
-import {
-  CLI_TOOLS,
-  buildCliTaskCommand,
-  type CliTool,
-  type CliToolId,
-} from "@/lib/cliTools";
-import { ipc, isTauri, type CliToolStatus } from "@/lib/ipc";
-import { executeTool } from "@/lib/tools";
-import { useSettingsStore } from "@/stores/settingsStore";
-import { useTerminalStore } from "@/stores/terminalStore";
-import { useUiStore } from "@/stores/uiStore";
-import { getActiveWorkspace, useWorkspaceStore } from "@/stores/workspaceStore";
-import {
-  useActiveWorkspace,
-  useWorkspaceTerminals,
-  useWorkspaceTodos,
-} from "@/hooks/useWorkspace";
-import { resolveTaskTerminal } from "@/lib/workspaceCore";
+import { PRIORITY_META } from "@/lib/todoPriority";
+import { useCopyText } from "@/hooks/useCopyText";
+import { useActiveWorkspace, useWorkspaceTodos } from "@/hooks/useWorkspace";
 import { useTodoStore } from "@/stores/todoStore";
-import { useToolRuntimeStore } from "@/stores/toolRuntimeStore";
 
-const PRIORITY_META: Record<
-  TodoPriority,
-  { label: string; dot: string; text: string; surface: string }
-> = {
-  critical: {
-    label: "Critical",
-    dot: "bg-red-500",
-    text: "text-red-600 dark:text-red-400",
-    surface: "bg-red-500/8",
-  },
-  high: {
-    label: "High",
-    dot: "bg-orange-500",
-    text: "text-orange-600 dark:text-orange-400",
-    surface: "bg-orange-500/8",
-  },
-  mid: {
-    label: "Mid",
-    dot: "bg-amber-500",
-    text: "text-amber-600 dark:text-amber-400",
-    surface: "bg-amber-500/8",
-  },
-  low: {
-    label: "Low",
-    dot: "bg-slate-500",
-    text: "text-slate-600 dark:text-slate-400",
-    surface: "bg-slate-500/8",
-  },
-};
-
-function PriorityAgentSelect({
-  priority,
-  agents,
-  loading,
-}: {
-  priority: TodoPriority;
-  agents: CliTool[];
-  loading: boolean;
-}) {
-  const configured = useTodoStore(
-    (state) => state.modelByPriority[priority],
-  );
-  const setPriorityModel = useTodoStore((state) => state.setPriorityModel);
-  const active = agents.find((agent) => configured === `cli::${agent.id}`);
-
-  return (
-    <Select
-      value={active ? `cli::${active.id}` : undefined}
-      onValueChange={(modelId) => setPriorityModel(priority, modelId)}
-      disabled={loading || agents.length === 0}
-    >
-      <SelectTrigger
-        size="sm"
-        className="h-7 min-w-0 border-0 bg-transparent px-0 text-xs shadow-none focus-visible:ring-1"
-        aria-label={`${PRIORITY_META[priority].label} priority CLI agent`}
-      >
-        <SelectValue
-          placeholder={loading ? "Checking agents..." : "Choose agent"}
-        />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectGroup>
-          <SelectLabel>Installed CLI agents</SelectLabel>
-          {agents.map((agent) => (
-            <SelectItem key={agent.id} value={`cli::${agent.id}`}>
-              {agent.name}
-            </SelectItem>
-          ))}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
-  );
-}
-
-function TodoTerminalSelect({ item }: { item: TodoItem }) {
-  // Only this workspace's shells: a task must never reach into another one.
-  const terminals = useWorkspaceTerminals();
-  const updateTodo = useTodoStore((state) => state.updateTodo);
-  const busy = item.status === "working" || item.status === "blocked";
-  const known = terminals.some((terminal) => terminal.id === item.terminalId);
-  const value = item.terminalId && known ? item.terminalId : "__none__";
-
-  return (
-    <Select
-      value={value}
-      onValueChange={(next) =>
-        updateTodo(item.id, {
-          terminalId: next === "__none__" ? undefined : next,
-        })
-      }
-      disabled={busy}
-    >
-      <SelectTrigger
-        size="sm"
-        className="h-6 w-28 border-0 bg-muted/60 px-2 text-[11px] shadow-none focus-visible:ring-1"
-        aria-label={`Terminal for ${item.text}`}
-      >
-        <div className="flex min-w-0 items-center gap-1.5">
-          <Terminal className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-          <SelectValue placeholder="Terminal" />
-        </div>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__none__">None</SelectItem>
-        {terminals.map((terminal) => (
-          <SelectItem key={terminal.id} value={terminal.id}>
-            {terminal.title}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-function TodoStatus({ item }: { item: TodoItem }) {
-  if (item.status === "working") {
-    return (
-      <span className="flex items-center gap-1.5 text-xs text-foreground">
-        <Loader2 className="size-3 animate-spin" aria-hidden />
-        Pass {item.pass ?? 1}/{item.multiAgent ? 2 : 1} working
-      </span>
-    );
-  }
-  if (item.status === "error") {
-    return (
-      <span
-        className="flex min-w-0 items-start gap-1.5 text-xs text-destructive"
-        title={item.error}
-      >
-        <X className="mt-0.5 size-3 shrink-0" aria-hidden />
-        <span className="line-clamp-2 break-words">
-          {item.error ?? "Work stopped"}
-        </span>
-      </span>
-    );
-  }
+function TodoStatusLine({ item }: { item: TodoItem }) {
   if (item.status === "done") {
     return (
       <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
@@ -233,7 +65,10 @@ function TodoCardOverlay({ item }: { item: TodoItem }) {
       )}
     >
       <div className="flex items-start gap-2">
-        <GripVertical className="mt-1 size-4 text-muted-foreground" aria-hidden />
+        <GripVertical
+          className="mt-1 size-4 text-muted-foreground"
+          aria-hidden
+        />
         <span
           className={cn(
             "h-auto min-w-0 flex-1 text-sm",
@@ -244,7 +79,7 @@ function TodoCardOverlay({ item }: { item: TodoItem }) {
         </span>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 pl-6">
-        <TodoStatus item={item} />
+        <TodoStatusLine item={item} />
       </div>
     </article>
   );
@@ -255,7 +90,7 @@ function TodoCard({ item }: { item: TodoItem }) {
   const updateTodo = useTodoStore((state) => state.updateTodo);
   const moveTodo = useTodoStore((state) => state.moveTodo);
   const removeTodo = useTodoStore((state) => state.removeTodo);
-  const busy = item.status === "working";
+  const { copied, copy } = useCopyText(item.text);
   const {
     attributes,
     listeners,
@@ -263,7 +98,7 @@ function TodoCard({ item }: { item: TodoItem }) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: item.id, disabled: busy });
+  } = useSortable({ id: item.id });
 
   const commit = () => {
     const trimmed = draft.trim();
@@ -273,6 +108,7 @@ function TodoCard({ item }: { item: TodoItem }) {
     }
     if (trimmed !== item.text) updateTodo(item.id, { text: trimmed });
   };
+
   return (
     <article
       ref={setNodeRef}
@@ -292,9 +128,8 @@ function TodoCard({ item }: { item: TodoItem }) {
           type="button"
           {...attributes}
           {...listeners}
-          disabled={busy}
           aria-label={`Drag ${item.text}`}
-          className="mt-1 cursor-grab text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground disabled:cursor-not-allowed disabled:opacity-40 active:cursor-grabbing"
+          className="mt-1 cursor-grab text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground active:cursor-grabbing"
         >
           <GripVertical className="size-4" aria-hidden />
         </button>
@@ -309,7 +144,6 @@ function TodoCard({ item }: { item: TodoItem }) {
               event.currentTarget.blur();
             }
           }}
-          disabled={busy}
           aria-label="Todo text"
           className={cn(
             "h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0",
@@ -322,7 +156,6 @@ function TodoCard({ item }: { item: TodoItem }) {
           size="icon"
           className="size-6 shrink-0 text-muted-foreground hover:text-destructive"
           onClick={() => removeTodo(item.id)}
-          disabled={busy}
           aria-label={`Delete ${item.text}`}
         >
           <Trash2 className="size-3.5" aria-hidden />
@@ -330,44 +163,21 @@ function TodoCard({ item }: { item: TodoItem }) {
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 pl-6">
-        <TodoStatus item={item} />
+        <TodoStatusLine item={item} />
         <div className="flex items-center gap-0.5">
-          {item.status === "error" && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-6 text-muted-foreground"
-              onClick={() =>
-                updateTodo(item.id, {
-                  status: "queued",
-                  error: undefined,
-                  sessionId: undefined,
-                  pass: undefined,
-                  blockedMessageId: undefined,
-                })
-              }
-              aria-label={`Retry ${item.text}`}
-            >
-              <RotateCcw className="size-3.5" aria-hidden />
-            </Button>
-          )}
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            aria-pressed={item.multiAgent}
-            onClick={() =>
-              updateTodo(item.id, { multiAgent: !item.multiAgent })
-            }
-            disabled={busy || item.status === "done"}
-            className={cn(
-              "h-6 gap-1 px-1.5 text-[11px] text-muted-foreground",
-              item.multiAgent && "bg-muted text-foreground",
-            )}
+            size="icon"
+            className="size-6 text-muted-foreground"
+            onClick={copy}
+            aria-label={copied ? "Copied" : `Copy ${item.text}`}
           >
-            <Users className="size-3" aria-hidden />
-            Multi
+            {copied ? (
+              <Check className="size-3.5 text-emerald-500" aria-hidden />
+            ) : (
+              <Copy className="size-3.5" aria-hidden />
+            )}
           </Button>
           <Button
             type="button"
@@ -377,10 +187,8 @@ function TodoCard({ item }: { item: TodoItem }) {
             onClick={() =>
               updateTodo(item.id, {
                 status: item.status === "done" ? "queued" : "done",
-                error: undefined,
               })
             }
-            disabled={busy}
             aria-label={
               item.status === "done"
                 ? `Return ${item.text} to queue`
@@ -395,10 +203,7 @@ function TodoCard({ item }: { item: TodoItem }) {
       <div className="mt-2 flex items-center gap-2 pl-6">
         <Select
           value={item.priority}
-          onValueChange={(priority: TodoPriority) =>
-            moveTodo(item.id, priority)
-          }
-          disabled={busy}
+          onValueChange={(priority: TodoPriority) => moveTodo(item.id, priority)}
         >
           <SelectTrigger
             size="sm"
@@ -415,7 +220,6 @@ function TodoCard({ item }: { item: TodoItem }) {
             ))}
           </SelectContent>
         </Select>
-        <TodoTerminalSelect item={item} />
       </div>
     </article>
   );
@@ -424,18 +228,15 @@ function TodoCard({ item }: { item: TodoItem }) {
 function PriorityLane({
   priority,
   items,
-  agents,
-  agentsLoading,
 }: {
   priority: TodoPriority;
   items: TodoItem[];
-  agents: CliTool[];
-  agentsLoading: boolean;
 }) {
   const [text, setText] = useState("");
   const addTodo = useTodoStore((state) => state.addTodo);
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${priority}` });
   const meta = PRIORITY_META[priority];
+  const addLabel = `Add ${meta.label.toLowerCase()} task`;
 
   return (
     <section
@@ -459,13 +260,6 @@ function PriorityLane({
             {items.length}
           </span>
         </div>
-        <div className="mt-1.5">
-          <PriorityAgentSelect
-            priority={priority}
-            agents={agents}
-            loading={agentsLoading}
-          />
-        </div>
       </header>
 
       <form
@@ -479,8 +273,8 @@ function PriorityLane({
         <Input
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={`Add ${meta.label.toLowerCase()} task`}
-          aria-label={`Add ${meta.label} Todo`}
+          placeholder={addLabel}
+          aria-label={addLabel}
           className="h-8 min-w-0 text-xs"
         />
         <Button
@@ -489,7 +283,7 @@ function PriorityLane({
           variant="outline"
           className="size-8 shrink-0"
           disabled={!text.trim()}
-          aria-label={`Add ${meta.label} Todo`}
+          aria-label={addLabel}
         >
           <Plus className="size-3.5" aria-hidden />
         </Button>
@@ -514,284 +308,20 @@ function PriorityLane({
   );
 }
 
-type RunResult = "done" | "error" | "stopped";
-const TODO_CLI_TIMEOUT_MS = 10 * 60 * 1000;
-
-/**
- * The run in flight, so Stop can interrupt the CLI agent holding the terminal
- * instead of waiting out its ten-minute timeout.
- */
-let activeRun: AbortController | null = null;
-
-function selectedCliId(
-  selection: string | null,
-  installedIds: ReadonlySet<CliToolId>,
-): CliToolId | null {
-  if (!selection?.startsWith("cli::")) return null;
-  const id = selection.slice(5) as CliToolId;
-  return installedIds.has(id) ? id : null;
-}
-
-async function executeTodo(
-  todoId: string,
-  installedIds: ReadonlySet<CliToolId>,
-  signal: AbortSignal,
-): Promise<RunResult> {
-  const todoStore = useTodoStore.getState();
-  const item = todoStore.items.find((todo) => todo.id === todoId);
-  if (!item) return "error";
-
-  const cliId = selectedCliId(
-    todoStore.modelByPriority[item.priority],
-    installedIds,
-  );
-  if (!cliId) {
-    todoStore.updateTodo(todoId, {
-      status: "error",
-      error: `Choose an installed CLI agent for ${PRIORITY_META[item.priority].label}.`,
-    });
-    return "error";
-  }
-
-  const workspaceId = item.workspaceId ?? getActiveWorkspace().id;
-  const workspace = useWorkspaceStore
-    .getState()
-    .workspaces.find((entry) => entry.id === workspaceId);
-  const terminalStore = useTerminalStore.getState();
-  const workspaceTerminals = terminalStore.terminals.filter(
-    (terminal) => terminal.workspaceId === workspaceId && !terminal.exited,
-  );
-  // A stored terminal id goes stale on every restart, so fall back to the
-  // workspace's own default rather than running in the wrong shell.
-  let todoTerminalId = resolveTaskTerminal(
-    item.terminalId,
-    workspaceTerminals.map((terminal) => terminal.id),
-    useWorkspaceStore.getState().defaultTerminalByWorkspace[workspaceId] ??
-      null,
-  );
-  if (!todoTerminalId) {
-    const created = await terminalStore.createTerminal(
-      workspace?.path ?? undefined,
-      undefined,
-      workspaceId,
-    );
-    todoTerminalId = created?.id;
-    if (todoTerminalId) {
-      todoStore.updateTodo(todoId, { terminalId: todoTerminalId });
-    }
-  }
-  if (!todoTerminalId) {
-    todoStore.updateTodo(todoId, {
-      status: "error",
-      error: "Could not open a terminal for this task.",
-    });
-    return "error";
-  }
-  terminalStore.setActiveTerminal(todoTerminalId);
-
-  // A stopped task goes back to the queue rather than to an error: nothing
-  // went wrong, and Start work should pick it up again where it left off.
-  const requeue = () => {
-    todoStore.updateTodo(todoId, {
-      status: "queued",
-      pass: undefined,
-      error: undefined,
-    });
-    return "stopped" as const;
-  };
-
-  const passes = item.multiAgent ? 2 : 1;
-  for (let pass = 1; pass <= passes; pass += 1) {
-    if (signal.aborted) return requeue();
-    const prompt =
-      pass === 2
-        ? `Review the current workspace after another CLI agent worked on this Todo. Fix anything incomplete, verify the result, then finish: ${item.text}`
-        : `Complete this Todo in the current workspace. Make the required changes, verify the result, then finish: ${item.text}`;
-    todoStore.updateTodo(todoId, {
-      status: "working",
-      pass,
-      error: undefined,
-    });
-    const result = await executeTool(
-      {
-        id: generateId(),
-        name: "shell_command",
-        args: {
-          command: buildCliTaskCommand(
-            cliId,
-            prompt,
-            useToolRuntimeStore.getState().permissionMode,
-          ),
-        },
-        status: "approved",
-      },
-      {
-        signal,
-        attachedFolders: workspace?.path ? [workspace.path] : [],
-        cwd:
-          workspace?.path ??
-          terminalStore.terminals.find(
-            (terminal) => terminal.id === todoTerminalId,
-          )?.cwd,
-        terminalId: todoTerminalId,
-        timeoutMs: TODO_CLI_TIMEOUT_MS,
-        workspaceId,
-      },
-    );
-    if (signal.aborted) return requeue();
-    if (!result.result?.success) {
-      todoStore.updateTodo(todoId, {
-        status: "error",
-        error:
-          result.result?.error ??
-          `${CLI_TOOLS.find((tool) => tool.id === cliId)?.name ?? cliId} stopped.`,
-      });
-      return "error";
-    }
-  }
-
-  todoStore.updateTodo(todoId, {
-    status: "done",
-    pass: undefined,
-    error: undefined,
-  });
-  return "done";
-}
-
-async function runQueue(installedIds: ReadonlySet<CliToolId>): Promise<void> {
-  const store = useTodoStore.getState();
-  if (store.runnerActive || activeRun) return;
-  // A runner works one workspace at a time: the board currently in view.
-  // Other boards stay queued until switched to.
-  const workspaceId = getActiveWorkspace().id;
-  const controller = new AbortController();
-  activeRun = controller;
-  store.setRunner(true);
-
-  try {
-    while (useTodoStore.getState().runnerActive && !controller.signal.aborted) {
-      const next = getNextTodo(
-        useTodoStore
-          .getState()
-          .items.filter((item) => item.workspaceId === workspaceId),
-      );
-      if (!next) break;
-      useTodoStore.getState().setRunner(true, next.id);
-      try {
-        const result = await executeTodo(next.id, installedIds, controller.signal);
-        if (result !== "done") break;
-      } catch (error) {
-        useTodoStore.getState().updateTodo(next.id, {
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        });
-        break;
-      }
-    }
-  } finally {
-    activeRun = null;
-    useTodoStore.getState().setRunner(false);
-  }
-}
-
-/**
- * Interrupts the running CLI agent and unwinds the queue.
- *
- * The runner stays marked active until it has actually unwound, so Start work
- * cannot launch a second one into the same terminal in the meantime.
- */
-function stopQueue(): void {
-  if (!activeRun) {
-    useTodoStore.getState().setRunner(false);
-    return;
-  }
-  useTodoStore.getState().setStopping(true);
-  activeRun.abort();
-}
-
 export function TodoView() {
   const items = useWorkspaceTodos();
   const workspace = useActiveWorkspace();
-  const runnerActive = useTodoStore((state) => state.runnerActive);
-  const stopping = useTodoStore((state) => state.stopping);
-  const activeTodoId = useTodoStore((state) => state.activeTodoId);
-
   const clearCompleted = useTodoStore((state) => state.clearCompleted);
   const moveTodo = useTodoStore((state) => state.moveTodo);
-  const modelByPriority = useTodoStore(
-    (state) => state.modelByPriority,
-  );
-  const permissionMode = useToolRuntimeStore(
-    (state) => state.permissionMode,
-  );
-  const setToolPermission = useSettingsStore(
-    (state) => state.setToolPermission,
-  );
-  const openSettings = useUiStore((state) => state.openSettings);
-  const [cliStatuses, setCliStatuses] = useState<CliToolStatus[]>([]);
-  const [cliLoading, setCliLoading] = useState(true);
-  const [cliError, setCliError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!isTauri) {
-      setCliLoading(false);
-      return;
-    }
-    void ipc
-      .listCliToolStatuses()
-      .then((statuses) => setCliStatuses(statuses))
-      .catch((error) =>
-        setCliError(error instanceof Error ? error.message : String(error)),
-      )
-      .finally(() => setCliLoading(false));
-  }, []);
-  const installedAgents = useMemo(
-    () =>
-      CLI_TOOLS.filter((agent) =>
-        cliStatuses.some((status) => status.id === agent.id && status.installed),
-      ),
-    [cliStatuses],
-  );
-  const installedIds = useMemo(
-    () => new Set(installedAgents.map((agent) => agent.id)),
-    [installedAgents],
-  );
-  const applyDefaultAgents = useTodoStore((state) => state.applyDefaultAgents);
-  // Lanes start pointed at an installed agent. Otherwise Start work sits
-  // disabled until the same agent is picked in all four lanes, which reads as
-  // a broken button rather than a missing choice.
-  useEffect(() => {
-    if (installedAgents.length === 0) return;
-    applyDefaultAgents(installedAgents.map((agent) => `cli::${agent.id}`));
-  }, [applyDefaultAgents, installedAgents]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
   );
-  const queued = items.filter((item) => item.status === "queued").length;
-  const completed = items.filter((item) => item.status === "done").length;
-  const active = items.find((item) => item.id === activeTodoId);
-  const missingAgentPriorities = TODO_PRIORITIES.filter(
-    (priority) =>
-      items.some(
-        (item) => item.priority === priority && item.status === "queued",
-      ) && !selectedCliId(modelByPriority[priority], installedIds),
-  );
-  const startBlockedReason = cliLoading
-    ? "Still checking which CLI agents are installed."
-    : cliError
-      ? `Could not inspect CLI agents: ${cliError}`
-      : installedAgents.length === 0
-        ? "No CLI agent is installed. Open Settings → CLI Tools to install one."
-        : permissionMode === "blocked"
-          ? "Tool permission is Blocked. Choose Manual, Auto, or YOLO."
-          : missingAgentPriorities.length > 0
-            ? `Choose an agent for ${missingAgentPriorities
-                .map((priority) => PRIORITY_META[priority].label)
-                .join(", ")}.`
-            : queued === 0
-              ? "No queued tasks on this board."
-              : null;
-  const canStart = startBlockedReason === null;
+  const open = items.filter((item) => item.status !== "done").length;
+  const completed = items.length - open;
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingItem = draggingId
@@ -825,7 +355,9 @@ export function TodoView() {
       <header className="flex flex-wrap items-center gap-x-5 gap-y-3 border-b border-border px-5 py-4">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <h1 className="shrink-0 text-lg font-semibold tracking-tight">Todo</h1>
+            <h1 className="shrink-0 text-lg font-semibold tracking-tight">
+              Todo
+            </h1>
             <span
               className="min-w-0 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
               title={workspace.path ?? workspace.name}
@@ -837,119 +369,22 @@ export function TodoView() {
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Each priority uses an installed CLI agent. Assign tasks to an idle
-            shell; Todo starts the agent there and runs Critical to Low.
+            Tasks are yours to run. Copy one and paste it into a terminal;
+            the sidebar lists them Critical first.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Select
-            value={permissionMode}
-            onValueChange={(value) =>
-              setToolPermission(value as typeof permissionMode)
-            }
+        {completed > 0 && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => clearCompleted(workspace.id)}
+            className="text-muted-foreground"
           >
-            <SelectTrigger
-              size="sm"
-              className="h-8 w-24 text-xs"
-              aria-label="Todo tool permission"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="manual">Manual</SelectItem>
-              <SelectItem value="auto">Auto</SelectItem>
-              <SelectItem value="yolo">YOLO</SelectItem>
-              <SelectItem value="blocked">Blocked</SelectItem>
-            </SelectContent>
-          </Select>
-          {completed > 0 && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => clearCompleted(workspace.id)}
-              disabled={runnerActive}
-              className="text-muted-foreground"
-            >
-              Clear done
-            </Button>
-          )}
-          {runnerActive ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={stopQueue}
-              disabled={stopping}
-              className="gap-1.5"
-            >
-              <Square className="size-3.5" aria-hidden />
-              {stopping ? "Stopping..." : "Stop"}
-            </Button>
-          ) : (
-            // A disabled button swallows its own tooltip, so the wrapper carries it.
-            <span title={startBlockedReason ?? undefined} className="inline-flex">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => void runQueue(installedIds)}
-                disabled={!canStart}
-                className="gap-1.5"
-              >
-                <Play className="size-3.5" aria-hidden />
-                Start work
-              </Button>
-            </span>
-          )}
-        </div>
-
-        <div className="basis-full" aria-live="polite">
-          {runnerActive && active ? (
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Bot className="size-3.5" aria-hidden />
-              {stopping ? "Stopping" : "Working on"}{" "}
-              {PRIORITY_META[active.priority].label}: {active.text}
-            </p>
-          ) : cliLoading ? (
-            <p className="text-xs text-muted-foreground">
-              Checking installed CLI agents...
-            </p>
-          ) : cliError ? (
-            <p className="text-xs text-destructive" role="alert">
-              Could not inspect CLI agents: {cliError}
-            </p>
-          ) : installedAgents.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No CLI agent is installed.{" "}
-              <button
-                type="button"
-                className="font-medium text-foreground underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => openSettings("providers")}
-              >
-                Open CLI Tools
-              </button>
-            </p>
-          ) : permissionMode === "blocked" ? (
-            <p className="text-xs text-muted-foreground">
-              Todo execution is blocked. Choose Manual, Auto, or YOLO to start.
-            </p>
-          ) : missingAgentPriorities.length > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              Choose an agent for{" "}
-              {missingAgentPriorities
-                .map((priority) => PRIORITY_META[priority].label)
-                .join(", ")}
-              .
-            </p>
-          ) : queued > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {queued} task{queued === 1 ? "" : "s"} ready
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">Queue is clear</p>
-          )}
-        </div>
+            Clear done
+          </Button>
+        )}
       </header>
 
       <DndContext
@@ -966,8 +401,6 @@ export function TodoView() {
                 key={priority}
                 priority={priority}
                 items={items.filter((item) => item.priority === priority)}
-                agents={installedAgents}
-                agentsLoading={cliLoading}
               />
             ))}
           </div>
