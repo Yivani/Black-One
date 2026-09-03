@@ -10,14 +10,19 @@ const COPIED_FEEDBACK_MS = 1200;
  * Copy to clipboard with short-lived confirmation.
  *
  * The tick only appears when the clipboard actually took the text; a refused
- * copy says so instead of looking like it worked. The timer is cleared on
- * unmount, so a row that is deleted, re-sorted or dragged away while the tick
- * is up never sets state after it is gone.
+ * copy says so instead of looking like it worked, and `onCopied` runs only on
+ * the successful path. The timer is cleared on unmount, so a row that is
+ * deleted, re-sorted or dragged away while the tick is up never sets state
+ * after it is gone.
  */
-export function useCopyText(text: string): {
+export function useCopyText(
+  text: string,
+  options: { onCopied?: () => void } = {},
+): {
   copied: boolean;
   copy: () => void;
 } {
+  const { onCopied } = options;
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -38,8 +43,9 @@ export function useCopyText(text: string): {
       setCopied(true);
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
+      onCopied?.();
     });
-  }, [text, t]);
+  }, [text, t, onCopied]);
 
   return { copied, copy };
 }

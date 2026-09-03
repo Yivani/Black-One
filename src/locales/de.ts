@@ -22,6 +22,7 @@ export const de: Record<TranslationKey, string> = {
   "common.open": "Öffnen",
   "common.copy": "Kopieren",
   "common.copyFailed": "Zwischenablage nicht erreichbar.",
+  "common.undo": "Rückgängig",
   "common.retry": "Erneut versuchen",
   "common.enabled": "Aktiviert",
   "common.disabled": "Deaktiviert",
@@ -48,8 +49,9 @@ export const de: Record<TranslationKey, string> = {
   "sidebar.noTerminals": "Noch keine Terminals",
   "sidebar.noTasks": "Noch keine Aufgaben",
   "sidebar.openBoard": "Todo-Board öffnen",
-  "sidebar.copyTask": "Aufgabe kopieren",
+  "sidebar.copyTask": "Aufgabe kopieren und erledigen",
   "sidebar.taskCopied": "In die Zwischenablage kopiert",
+  "todo.copiedDone": "Kopiert — als erledigt markiert",
   "sidebar.tasksFinished": "Alle {count} Aufgaben erledigt",
   "sidebar.shellCount": "{count} Terminals",
 

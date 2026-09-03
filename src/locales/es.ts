@@ -22,6 +22,7 @@ export const es: Record<TranslationKey, string> = {
   "common.open": "Abrir",
   "common.copy": "Copiar",
   "common.copyFailed": "No se pudo acceder al portapapeles.",
+  "common.undo": "Deshacer",
   "common.retry": "Reintentar",
   "common.enabled": "Activado",
   "common.disabled": "Desactivado",
@@ -48,8 +49,9 @@ export const es: Record<TranslationKey, string> = {
   "sidebar.noTerminals": "Aún no hay terminales",
   "sidebar.noTasks": "Aún no hay tareas",
   "sidebar.openBoard": "Abrir el tablero de tareas",
-  "sidebar.copyTask": "Copiar tarea",
+  "sidebar.copyTask": "Copiar tarea y marcarla hecha",
   "sidebar.taskCopied": "Copiado al portapapeles",
+  "todo.copiedDone": "Copiado: marcada como hecha",
   "sidebar.tasksFinished": "Las {count} tareas están terminadas",
   "sidebar.shellCount": "{count} terminales",
 

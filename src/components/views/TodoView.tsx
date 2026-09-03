@@ -35,7 +35,7 @@ import {
   type TodoPriority,
 } from "@/lib/todoCore";
 import { PRIORITY_META } from "@/lib/todoPriority";
-import { useCopyText } from "@/hooks/useCopyText";
+import { useCopyTodo } from "@/hooks/useCopyTodo";
 import { useActiveWorkspace, useWorkspaceTodos } from "@/hooks/useWorkspace";
 import { useTodoStore } from "@/stores/todoStore";
 
@@ -90,7 +90,7 @@ function TodoCard({ item }: { item: TodoItem }) {
   const updateTodo = useTodoStore((state) => state.updateTodo);
   const moveTodo = useTodoStore((state) => state.moveTodo);
   const removeTodo = useTodoStore((state) => state.removeTodo);
-  const { copied, copy } = useCopyText(item.text);
+  const { copied, copy } = useCopyTodo(item);
   const {
     attributes,
     listeners,
@@ -171,7 +171,9 @@ function TodoCard({ item }: { item: TodoItem }) {
             size="icon"
             className="size-6 text-muted-foreground"
             onClick={copy}
-            aria-label={copied ? "Copied" : `Copy ${item.text}`}
+            aria-label={
+              copied ? "Copied" : `Copy ${item.text} and mark it done`
+            }
           >
             {copied ? (
               <Check className="size-3.5 text-emerald-500" aria-hidden />
@@ -369,8 +371,9 @@ export function TodoView() {
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Tasks are yours to run. Copy one and paste it into a terminal;
-            the sidebar lists them Critical first.
+            Tasks are yours to run. Copying one hands it over — it goes to the
+            clipboard and is ticked off, undo included. The sidebar lists what
+            is left, Critical first.
           </p>
         </div>
 

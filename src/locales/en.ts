@@ -26,6 +26,7 @@ export const en = {
   "common.open": "Open",
   "common.copy": "Copy",
   "common.copyFailed": "Could not reach the clipboard.",
+  "common.undo": "Undo",
   "common.retry": "Retry",
   "common.enabled": "Enabled",
   "common.disabled": "Disabled",
@@ -52,8 +53,9 @@ export const en = {
   "sidebar.noTerminals": "No terminals yet",
   "sidebar.noTasks": "No tasks yet",
   "sidebar.openBoard": "Open the Todo board",
-  "sidebar.copyTask": "Copy task",
+  "sidebar.copyTask": "Copy task and mark it done",
   "sidebar.taskCopied": "Copied to clipboard",
+  "todo.copiedDone": "Copied — marked done",
   "sidebar.tasksFinished": "All {count} tasks finished",
   "sidebar.shellCount": "{count} shells",
 

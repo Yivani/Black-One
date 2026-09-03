@@ -43,7 +43,7 @@ import {
   SIDEBAR_ROW_IDLE,
   SIDEBAR_ROW_REVEAL,
 } from "@/components/layout/SidebarPrimitives";
-import { useCopyText } from "@/hooks/useCopyText";
+import { useCopyTodo } from "@/hooks/useCopyTodo";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
   useActiveTerminalId,
@@ -99,12 +99,13 @@ function TipButton({ label, onClick, children, active }: TipButtonProps) {
  *
  * The whole row is the copy button, because copying is the only thing this
  * list is for: the task text goes to the clipboard ready to paste into a
- * terminal. The priority dot carries the same colour as the board lane, so
- * "Critical first" is legible without reading the order.
+ * terminal, and the task is ticked off on its way out — which is why the row
+ * then leaves the list. The priority dot carries the same colour as the board
+ * lane, so "Critical first" is legible without reading the order.
  */
 function TodoQueueRow({ item }: { item: TodoItem }) {
   const { t } = useTranslation();
-  const { copied, copy } = useCopyText(item.text);
+  const { copied, copy } = useCopyTodo(item);
   const meta = PRIORITY_META[item.priority];
 
   return (
