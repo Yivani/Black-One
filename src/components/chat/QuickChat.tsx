@@ -6,6 +6,7 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAppBootstrap } from "@/App";
+import { useClipboardBridge } from "@/hooks/useClipboardBridge";
 import { useResolvedDark, useTheme } from "@/hooks/useTheme";
 import { ipc, isTauri } from "@/lib/ipc";
 import { useChatStore } from "@/stores/chatStore";
@@ -26,6 +27,7 @@ export function QuickChat() {
   );
   const expandedRef = useRef(false);
   useTheme();
+  useClipboardBridge();
 
   useEffect(() => {
     if (!isTauri) return;

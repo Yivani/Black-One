@@ -21,6 +21,7 @@ export const de: Record<TranslationKey, string> = {
   "common.refresh": "Aktualisieren",
   "common.open": "Öffnen",
   "common.copy": "Kopieren",
+  "common.copyFailed": "Zwischenablage nicht erreichbar.",
   "common.retry": "Erneut versuchen",
   "common.enabled": "Aktiviert",
   "common.disabled": "Deaktiviert",

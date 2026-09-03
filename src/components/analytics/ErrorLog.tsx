@@ -17,6 +17,7 @@ import {
   type ErrorCategory,
 } from "@/lib/errors";
 import { isTauri } from "@/lib/ipc";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | ErrorCategory;
@@ -31,8 +32,8 @@ const CATEGORY_LABELS: Record<ErrorCategory, string> = {
 };
 
 async function copyError(error: AppError): Promise<void> {
-  await navigator.clipboard.writeText(errorReportText(error));
-  toast.success("Diagnostics copied.");
+  if (await copyText(errorReportText(error))) toast.success("Diagnostics copied.");
+  else toast.error("Could not reach the clipboard.");
 }
 
 async function reportIssue(error: AppError): Promise<void> {

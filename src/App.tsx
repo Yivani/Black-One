@@ -7,6 +7,7 @@ import { UpdateDialog } from "@/components/shared/UpdateDialog";
 import { CommandPalette } from "@/components/chat/CommandPalette";
 import { VibeHearts } from "@/components/chat/VibeHearts";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useClipboardBridge } from "@/hooks/useClipboardBridge";
 import { useHapticFeedback } from "@/hooks/useHaptics";
 import { useKeyboardShortcut, type ShortcutHandlers } from "@/hooks/useKeyboardShortcut";
 import { useSystemBridge } from "@/hooks/useSystemBridge";
@@ -99,6 +100,7 @@ export function App() {
   const dark = useResolvedDark();
   useTheme();
   useHapticFeedback();
+  useClipboardBridge();
   useKeyboardShortcut(shortcutHandlers);
   useSystemBridge();
   useMemorySaveToasts();

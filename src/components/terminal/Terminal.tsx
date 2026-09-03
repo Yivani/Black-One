@@ -2,8 +2,13 @@ import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Copy, ClipboardPaste } from "lucide-react";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import "@xterm/xterm/css/xterm.css";
+import {
+  copyText,
+  isMacPlatform,
+  readClipboardText,
+} from "@/lib/clipboard";
+import { clipboardActionFor } from "@/lib/clipboardKeys";
 import { ipc, isTauri } from "@/lib/ipc";
 import { subscribeTerminalEvents } from "@/lib/terminalChannel";
 import { reportAppError } from "@/lib/errors";
@@ -23,39 +28,6 @@ function base64ToBytes(base64: string): Uint8Array {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
-}
-
-function isMac(): boolean {
-  return navigator.platform.toLowerCase().includes("mac");
-}
-
-function isPasteShortcut(event: KeyboardEvent | React.KeyboardEvent): boolean {
-  if (isMac()) {
-    return (
-      event.metaKey &&
-      event.key === "v" &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey
-    );
-  }
-  // Accept both standard Ctrl+V and terminal-style Ctrl+Shift+V.
-  return event.ctrlKey && event.key === "v" && !event.altKey && !event.metaKey;
-}
-
-function isCopyShortcut(event: KeyboardEvent | React.KeyboardEvent): boolean {
-  if (isMac()) {
-    return (
-      event.metaKey &&
-      event.key === "c" &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey
-    );
-  }
-  // Accept both standard Ctrl+C and terminal-style Ctrl+Shift+C.
-  // Note: this overrides sending SIGINT to the running process.
-  return event.ctrlKey && event.key === "c" && !event.altKey && !event.metaKey;
 }
 
 function waitForSize(element: HTMLElement): Promise<{ width: number; height: number }> {
@@ -165,35 +137,32 @@ export function Terminal({ terminalId, active }: TerminalProps) {
       terminal.loadAddon(fitAddon);
       terminal.open(container);
 
-      // xterm.js relies on the browser paste event, which is restricted inside
-      // the Tauri webview. Intercept copy/paste shortcuts and route them through
-      // Tauri's clipboard manager so text copied outside the app can be pasted
-      // into the terminal and terminal selections can be copied out.
+      // xterm.js relies on the browser paste event, which the webview does not
+      // deliver here, so the shortcuts are read directly and routed through the
+      // clipboard helper.
       handleKeyDown = async (event: KeyboardEvent) => {
-        if (isPasteShortcut(event)) {
+        const action = clipboardActionFor(event, isMacPlatform());
+        // Cut has no meaning at a prompt: Ctrl+X belongs to the shell.
+        if (action !== "copy" && action !== "paste") return;
+
+        if (action === "paste") {
           event.preventDefault();
           event.stopPropagation();
-          try {
-            const text = await readText();
-            if (text) terminal.paste(text);
-          } catch (error) {
-            console.error("Failed to paste from clipboard", error);
-          }
+          const text = await readClipboardText();
+          if (text) terminal.paste(text);
           return;
         }
 
-        if (isCopyShortcut(event)) {
-          event.preventDefault();
-          event.stopPropagation();
-          const selection = terminal.getSelection();
-          if (!selection) return;
-          try {
-            await writeText(selection);
-          } catch (error) {
-            console.error("Failed to copy to clipboard", error);
-          }
-          return;
-        }
+        // Ctrl+C with nothing selected is an interrupt, not a copy. Leaving it
+        // alone is what lets xterm send the signal through to the shell.
+        const selection = terminal.getSelection();
+        if (!selection) return;
+        event.preventDefault();
+        event.stopPropagation();
+        await copyText(selection);
+        // Dropping the selection means the next Ctrl+C interrupts again,
+        // rather than copying the same text for as long as it is highlighted.
+        terminal.clearSelection();
       };
       container.addEventListener("keydown", handleKeyDown, true);
 
@@ -298,12 +267,8 @@ export function Terminal({ terminalId, active }: TerminalProps) {
   const pasteFromClipboard = async () => {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    try {
-      const text = await readText();
-      if (text) terminal.paste(text);
-    } catch (error) {
-      console.error("Failed to paste from clipboard", error);
-    }
+    const text = await readClipboardText();
+    if (text) terminal.paste(text);
   };
 
   const copyToClipboard = async () => {
@@ -311,24 +276,21 @@ export function Terminal({ terminalId, active }: TerminalProps) {
     if (!terminal) return;
     const selection = terminal.getSelection();
     if (!selection) return;
-    try {
-      await writeText(selection);
-    } catch (error) {
-      console.error("Failed to copy to clipboard", error);
-    }
+    await copyText(selection);
+    terminal.clearSelection();
   };
 
   const contextMenuItems: ContextMenuEntry[] = [
     {
       label: "Copy",
       icon: Copy,
-      shortcut: isMac() ? "⌘C" : "Ctrl+C",
+      shortcut: isMacPlatform() ? "⌘C" : "Ctrl+C",
       onSelect: () => void copyToClipboard(),
     },
     {
       label: "Paste",
       icon: ClipboardPaste,
-      shortcut: isMac() ? "⌘V" : "Ctrl+V",
+      shortcut: isMacPlatform() ? "⌘V" : "Ctrl+V",
       onSelect: () => void pasteFromClipboard(),
     },
   ];

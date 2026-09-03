@@ -42,6 +42,7 @@ import {
   getVisibleAssistantContent,
   isStatusQuestion,
 } from "@/lib/chatDisplay";
+import { useCopyText } from "@/hooks/useCopyText";
 import { cn, formatTimestamp } from "@/lib/utils";
 import {
   parseToolCalls,
@@ -63,21 +64,6 @@ const ATTACHMENT_ICONS: Record<AttachmentKind, LucideIcon> = {
   image: Image,
   url: Link2,
 };
-
-async function copyText(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
-}
 
 function reportError(error: unknown): void {
   toast.error(error instanceof Error ? error.message : String(error));
@@ -255,7 +241,7 @@ export const MessageBubble = memo(function MessageBubble({
     return message.modelId;
   });
 
-  const [copied, setCopied] = useState(false);
+  const { copied, copy: handleCopy } = useCopyText(message.content);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const activityMessages = turnMessages ?? [message];
@@ -350,12 +336,6 @@ export const MessageBubble = memo(function MessageBubble({
       </div>
     );
   }
-
-  const handleCopy = () => {
-    void copyText(message.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
 
   const handleRegenerate = () => {
     useChatStore.getState().regenerateLast().catch(reportError);

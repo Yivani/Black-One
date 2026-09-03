@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTranslation } from "@/hooks/useTranslation";
 import { persistence } from "@/lib/persistence";
+import { copyText } from "@/lib/clipboard";
 import {
   estimateMemorySize,
   PREDEFINED_CATEGORIES,
@@ -267,12 +268,8 @@ export function MemoryViewer() {
       toast.error(t("memory.empty"));
       return;
     }
-    try {
-      await navigator.clipboard.writeText(markdown);
-      toast.success(t("memory.copyMarkdown"));
-    } catch {
-      toast.error(t("common.retry"));
-    }
+    if (await copyText(markdown)) toast.success(t("memory.copyMarkdown"));
+    else toast.error(t("common.copyFailed"));
   };
 
   const filters: Array<{ id: SourceFilter; label: string }> = [

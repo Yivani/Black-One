@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { Highlight, themes } from "prism-react-renderer";
 import { Button } from "@/components/ui/button";
+import { useCopyText } from "@/hooks/useCopyText";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { cn, copyText } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 interface CodeBlockProps {
   language: string;
@@ -12,27 +12,12 @@ interface CodeBlockProps {
 
 export function CodeBlock({ language, code }: CodeBlockProps) {
   const codeTheme = useSettingsStore((s) => s.settings.chat.codeTheme);
-  const [copied, setCopied] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(
-    () => () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  const { copied, copy } = useCopyText(code);
 
   const documentDark =
     typeof document !== "undefined" && document.documentElement.classList.contains("dark");
   const dark = codeTheme === "dark" || (codeTheme === "auto" && documentDark);
   const theme = dark ? themes.oneDark : themes.oneLight;
-
-  const handleCopy = () => {
-    void copyText(code);
-    setCopied(true);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setCopied(false), 1500);
-  };
 
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-muted/40">
@@ -42,7 +27,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
           variant="ghost"
           size="icon"
           className="size-7"
-          onClick={handleCopy}
+          onClick={copy}
           aria-label={copied ? "Copied" : "Copy code"}
         >
           {copied ? (

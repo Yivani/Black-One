@@ -25,6 +25,7 @@ export const en = {
   "common.refresh": "Refresh",
   "common.open": "Open",
   "common.copy": "Copy",
+  "common.copyFailed": "Could not reach the clipboard.",
   "common.retry": "Retry",
   "common.enabled": "Enabled",
   "common.disabled": "Disabled",

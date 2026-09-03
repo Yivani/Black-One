@@ -3,6 +3,7 @@ import { Copy, RefreshCw, Terminal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/lib/ipc";
+import { copyText } from "@/lib/clipboard";
 import { GITHUB_REPO_URL } from "@/lib/constants";
 import { createGitHubIssueUrl, errorReportText, reportAppError } from "@/lib/errors";
 
@@ -65,11 +66,7 @@ export class ErrorBoundary extends Component<Props, State> {
       occurredAt: Date.now(),
       occurrences: 1,
     });
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Some environments block clipboard; ignore.
-    }
+    await copyText(text);
   };
 
   private openIssues = () => {

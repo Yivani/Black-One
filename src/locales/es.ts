@@ -21,6 +21,7 @@ export const es: Record<TranslationKey, string> = {
   "common.refresh": "Actualizar",
   "common.open": "Abrir",
   "common.copy": "Copiar",
+  "common.copyFailed": "No se pudo acceder al portapapeles.",
   "common.retry": "Reintentar",
   "common.enabled": "Activado",
   "common.disabled": "Desactivado",
