@@ -222,13 +222,25 @@ fn title_for_shell(shell: &Shell, cwd: Option<&str>) -> String {
 
 type Sessions = Arc<Mutex<HashMap<String, TerminalSession>>>;
 
-/// Whether any live process reports `shell_pid` as its parent.
-fn has_live_child(system: &System, shell_pid: u32) -> bool {
+/// Names a live process running under `shell_pid`, or `None` when it is idle.
+///
+/// Windows does not clear a process's recorded parent id when the parent dies,
+/// and it recycles pids freely. An orphan whose long-dead parent happened to
+/// hold this pid therefore still points at it, and reporting that as the
+/// shell's child marks an idle terminal busy forever. A real child cannot have
+/// started before its parent, so the start times settle it.
+fn find_live_child(system: &System, shell_pid: u32) -> Option<String> {
     let parent = sysinfo::Pid::from_u32(shell_pid);
+    let shell_started = system.process(parent)?.start_time();
     system
         .processes()
         .values()
-        .any(|process| process.parent() == Some(parent))
+        .find(|process| {
+            process.pid() != parent
+                && process.parent() == Some(parent)
+                && process.start_time() >= shell_started
+        })
+        .map(|process| process.name().to_string_lossy().to_string())
 }
 
 #[derive(Default)]
@@ -379,8 +391,9 @@ impl TerminalManager {
     ///
     /// A shell with any live child process is treated as busy. That is exactly
     /// the condition under which a write reaches something other than the
-    /// shell's own command line.
-    pub fn busy(&self, id: &str) -> Result<bool, AppError> {
+    /// shell's own command line. The program's name comes back with the answer
+    /// so the refusal can say what is holding the terminal.
+    pub fn busy(&self, id: &str) -> Result<Option<String>, AppError> {
         let shell_pid = {
             let sessions = self
                 .sessions
@@ -393,7 +406,7 @@ impl TerminalManager {
             // idle keeps the terminal usable rather than blocking every write.
             match session.child.process_id() {
                 Some(pid) => pid,
-                None => return Ok(false),
+                None => return Ok(None),
             }
         };
 
@@ -403,7 +416,7 @@ impl TerminalManager {
             true,
             ProcessRefreshKind::nothing(),
         );
-        Ok(has_live_child(&system, shell_pid))
+        Ok(find_live_child(&system, shell_pid))
     }
 
     /// Writes to a terminal, failing when it is gone.
@@ -555,16 +568,162 @@ mod tests {
         .spawn()
         .expect("spawning a short-lived child");
 
-        assert!(has_live_child(&scan(), std::process::id()));
+        let running = find_live_child(&scan(), std::process::id());
+        assert!(running.is_some(), "a spawned child should be visible");
 
         let _ = child.kill();
         let _ = child.wait();
     }
 
+    /// A live PTY shell, brought all the way to its prompt.
+    ///
+    /// Two things bite a test that spawns one by hand. Dropping the master
+    /// closes the pseudoconsole and kills the shell, and PowerShell's line
+    /// editor asks the terminal where the cursor is (`ESC[6n`) and draws no
+    /// prompt until something answers. xterm.js answers in the app; a test
+    /// that gets either wrong holds a dead or frozen shell, which quietly
+    /// passes any "is it idle" assertion.
+    struct PtyShell {
+        _master: Box<dyn MasterPty + Send>,
+        child: Box<dyn Child + Send>,
+        pid: u32,
+        writer: Box<dyn Write + Send>,
+        seen: Arc<Mutex<String>>,
+    }
+
+    impl PtyShell {
+        fn spawn() -> Self {
+            let pair = native_pty_system()
+                .openpty(PtySize {
+                    cols: 80,
+                    rows: 24,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .unwrap();
+            let shell = pick_shell(None).unwrap();
+            let mut cmd = CommandBuilder::new(&shell.program);
+            for arg in &shell.args {
+                cmd.arg(arg);
+            }
+            let child = pair.slave.spawn_command(cmd).unwrap();
+            let pid = child.process_id().unwrap();
+            let mut reader = pair.master.try_clone_reader().unwrap();
+            let mut writer = pair.master.take_writer().unwrap();
+            let seen = Arc::new(Mutex::new(String::new()));
+            let sink = seen.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = reader.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    sink.lock()
+                        .unwrap()
+                        .push_str(&String::from_utf8_lossy(&buf[..n]));
+                }
+            });
+            writer.write_all(b"\x1b[1;1R").unwrap();
+            writer.flush().unwrap();
+            let shell_pty = Self {
+                _master: pair.master,
+                child,
+                pid,
+                writer,
+                seen,
+            };
+            assert!(
+                shell_pty.wait_for(|out| out.contains('$') || out.contains('>')),
+                "the shell never reached a prompt",
+            );
+            shell_pty
+        }
+
+        fn wait_for(&self, ready: impl Fn(&str) -> bool) -> bool {
+            for _ in 0..100 {
+                if ready(&self.seen.lock().unwrap()) {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            false
+        }
+
+        /// Submits a command line. Enter is a carriage return: a bare newline
+        /// leaves PowerShell sitting at its continuation prompt.
+        fn run(&mut self, line: &str) {
+            self.writer.write_all(line.as_bytes()).unwrap();
+            self.writer.write_all(b"\r").unwrap();
+            self.writer.flush().unwrap();
+        }
+    }
+
+    impl Drop for PtyShell {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// The regression behind the false "busy" report: a shell sitting at its
+    /// prompt must read as idle. Needs a real PTY, so it is opt-in.
+    #[test]
+    #[ignore = "needs a real PTY; run with --ignored"]
+    fn an_idle_pty_shell_reads_as_idle() {
+        let shell = PtyShell::spawn();
+        assert_eq!(
+            find_live_child(&scan(), shell.pid),
+            None,
+            "a shell at its prompt must not be reported busy",
+        );
+    }
+
+    /// The other half of the same guard: a shell actually running a program
+    /// must be reported busy, and named.
+    #[test]
+    #[ignore = "needs a real PTY; run with --ignored"]
+    fn a_pty_shell_running_a_program_is_named() {
+        let mut shell = PtyShell::spawn();
+        // Stands in for a CLI agent: a child that holds the shell for a while.
+        shell.run(if cfg!(windows) {
+            "ping -n 30 127.0.0.1"
+        } else {
+            "sleep 30"
+        });
+        assert!(
+            shell.wait_for(|out| out.contains("127.0.0.1")),
+            "the shell never ran the command",
+        );
+
+        let mut running = None;
+        for _ in 0..50 {
+            running = find_live_child(&scan(), shell.pid);
+            if running.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(
+            running.is_some(),
+            "a shell running a program must be reported busy",
+        );
+    }
+
     #[test]
     fn an_unknown_pid_has_no_children() {
         // Reserved on every supported platform, so nothing can be parented to it.
-        assert!(!has_live_child(&scan(), u32::MAX));
+        assert!(find_live_child(&scan(), u32::MAX).is_none());
+    }
+
+    /// The guard reads start times to reject recycled parent ids, so a refresh
+    /// that stopped reporting them would silently make every shell look idle.
+    #[test]
+    fn processes_report_a_start_time() {
+        let system = scan();
+        let own = system
+            .process(sysinfo::Pid::from_u32(std::process::id()))
+            .expect("this process must be in its own scan");
+        assert!(own.start_time() > 0);
     }
 
     #[test]

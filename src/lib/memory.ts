@@ -576,13 +576,10 @@ export async function syncAgentContext(folder: string): Promise<string[]> {
   for (const { file } of AGENT_CONTEXT_FILES) {
     if (!wanted.includes(file)) continue;
     const path = contextFilePath(folder, file);
-    let existing = "";
-    try {
-      existing = await ipc.readFileText(path, [folder]);
-    } catch {
-      // No file yet. Creating one for an empty bank would be litter.
-      if (block === null) continue;
-    }
+    const found = await ipc.readFileTextIfPresent(path, [folder]);
+    // No file yet. Creating one for an empty bank would be litter.
+    if (found === null && block === null) continue;
+    const existing = found ?? "";
     if (!needsUpdate(existing, block)) continue;
     try {
       await ipc.writeFileText(path, mergeAgentFile(existing, block), [folder]);

@@ -51,8 +51,11 @@ pub fn list_terminals(state: State<'_, AppState>) -> Result<Vec<TerminalSummary>
     state.terminals.list()
 }
 
-/// True when something other than the shell prompt would receive a write.
+/// Names the program holding a terminal, or null when it is at its prompt.
 #[tauri::command]
-pub fn terminal_busy(state: State<'_, AppState>, id: String) -> Result<bool, AppError> {
+pub fn terminal_busy(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<String>, AppError> {
     state.terminals.busy(&id)
 }

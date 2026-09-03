@@ -435,28 +435,35 @@ function awaitTerminalCommand(
   });
 }
 
-/** How long to wait before confirming that a terminal is really occupied. */
-const BUSY_RECHECK_MS = 250;
+/** Samples taken before a terminal is declared occupied, and their spacing. */
+const BUSY_SAMPLES = 3;
+const BUSY_SAMPLE_GAP_MS = 200;
 
 /**
- * Whether something other than the shell prompt would receive a write.
+ * Names the program holding a terminal, or null when it is at its prompt.
  *
- * Sampled twice. A prompt function that shells out to git puts a child under
- * the shell for a few milliseconds, and failing a task over that would be
- * worse than the problem being solved; a shell hosting an agent is busy on
- * both reads.
+ * Refusing to run is a real cost to the user, so the answer has to be worth
+ * it. A themed prompt that shells out — oh-my-posh, a git status segment —
+ * puts a child under the shell for a few milliseconds at a time, and blocking
+ * a task over that would be worse than the problem being solved. An agent
+ * holding the shell shows the same name on every sample; a prompt helper does
+ * not survive three.
  *
  * A probe that cannot answer must not block the terminal: an older backend
  * without the command, or a session that just closed, both report idle and
  * leave the existing checks to catch a bad write.
  */
-async function isTerminalBusy(terminalId: string): Promise<boolean> {
+async function terminalBusyWith(terminalId: string): Promise<string | null> {
   try {
-    if (!(await ipc.terminalBusy(terminalId))) return false;
-    await new Promise((resolve) => setTimeout(resolve, BUSY_RECHECK_MS));
-    return await ipc.terminalBusy(terminalId);
+    const first = await ipc.terminalBusy(terminalId);
+    if (!first) return null;
+    for (let sample = 1; sample < BUSY_SAMPLES; sample += 1) {
+      await new Promise((resolve) => setTimeout(resolve, BUSY_SAMPLE_GAP_MS));
+      if ((await ipc.terminalBusy(terminalId)) !== first) return null;
+    }
+    return first;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -518,10 +525,11 @@ async function executeShellCommandInTerminal(
     // running in this terminal, the same bytes are typed into *its* input box
     // — which is how a Todo used to paste a page of PowerShell into a running
     // Kimi or Claude session instead of executing anything.
-    if (await isTerminalBusy(terminalId)) {
+    const running = await terminalBusyWith(terminalId);
+    if (running) {
       return {
         stdout: "",
-        stderr: `The shell in "${terminal.title}" is busy running another program. Wait for it to finish, or choose an idle terminal.`,
+        stderr: `The shell in "${terminal.title}" is busy running ${running}. Wait for it to finish, or choose an idle terminal.`,
         exitCode: 1,
         timedOut: false,
       };

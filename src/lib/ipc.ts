@@ -15,13 +15,28 @@ async function getInvoke(): Promise<InvokeFn> {
   return cachedInvoke;
 }
 
-export async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export interface InvokeOptions {
+  /**
+   * Send a failure to the error log. Off for calls whose failure is a normal
+   * answer — asking for an optional file that has not been created yet is not
+   * something to show the user a logged error about.
+   */
+  report?: boolean;
+}
+
+export async function invokeTauri<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+  options: InvokeOptions = {},
+): Promise<T> {
   if (!isTauri) throw new Error(`Tauri command "${cmd}" is unavailable outside the desktop shell.`);
   try {
     const invoke = await getInvoke();
     return await invoke<T>(cmd, args);
   } catch (error) {
-    reportAppError(error, { source: `Tauri: ${cmd}` });
+    if (options.report !== false) {
+      reportAppError(error, { source: `Tauri: ${cmd}` });
+    }
     throw error;
   }
 }
@@ -293,6 +308,21 @@ export const ipc = {
 
   readFileText: (path: string, roots?: string[]) =>
     invokeTauri<string>("read_file_text", { path, roots }),
+  /**
+   * Reads a file the caller expects may not exist yet, returning null instead
+   * of raising. Keeps optional-file misses out of the error log.
+   */
+  readFileTextIfPresent: async (path: string, roots?: string[]) => {
+    try {
+      return await invokeTauri<string>(
+        "read_file_text",
+        { path, roots },
+        { report: false },
+      );
+    } catch {
+      return null;
+    }
+  },
   readDirEntries: (path: string, roots?: string[]) =>
     invokeTauri<DirEntry[]>("read_dir_entries", { path, roots }),
   /** Canonicalizing containment check, for callers that bypass the shell command. */
@@ -367,8 +397,9 @@ export const ipc = {
     invokeTauri<void>("resize_terminal", { id, cols, rows }),
   closeTerminal: (id: string) => invokeTauri<void>("close_terminal", { id }),
   listTerminals: () => invokeTauri<TerminalSummary[]>("list_terminals"),
-  /** True when a program other than the shell prompt would receive a write. */
-  terminalBusy: (id: string) => invokeTauri<boolean>("terminal_busy", { id }),
+  /** Names the program holding a terminal, or null when it is at its prompt. */
+  terminalBusy: (id: string) =>
+    invokeTauri<string | null>("terminal_busy", { id }),
 };
 
 // Terminal output is streamed through a Tauri Channel registered at app
